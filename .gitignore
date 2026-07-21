@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# CLAUDE.md §2: nunca commitear secretos — .env local fuera, .env.example versionado
+.env
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
