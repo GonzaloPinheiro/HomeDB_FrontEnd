@@ -206,7 +206,7 @@ Base: todas bajo `/api`, autenticadas salvo que se diga lo contrario.
 - `GET /admin/users` — query `{ userId?, UserName?, Email?, From?, To?, roleId?, RoleName?, Page, PageSize }` → paginado
 - `GET /admin/users/{userId}` → `UserSummaryDto | null`
 - `DELETE /admin/users/{userId}` — **rol Admin + módulo** → `DeleteUserResponseDto`. Falla con `UserHasAssociatedData` (409) si tiene archivos/carpetas — no hay borrado en cascada.
-- `PATCH /users/me` — cualquier usuario autenticado — `{ Username?, Email? }` → `UpdateProfileResponseDto`
+- `PATCH /users/me` — cualquier usuario autenticado — `{ Username?, Email? }` → `UpdateProfileResponseDto`. **No existe ningún `GET /users/me`** para leer el propio perfil — solo se puede escribir, no leer. El front trata un campo vacío como "no cambiar" en vez de precargar el valor actual (no hay de dónde traerlo). **Matiz confirmado en julio 2026**: la comprobación de unicidad de `Username`/`Email` no excluye al propio usuario — reenviar tu username actual sin cambios da `UserAlreadyExists` (1007). Mitigado en el front porque solo se envían los campos realmente modificados (nunca el valor sin cambiar), así que no se llega a disparar en uso normal.
 
 **Admin — Permisos por módulo** (módulo `UserManagement` **+ rol Admin** para ver/editar los de otros)
 - `GET /users/me/permissions` — cualquier usuario → `UserModulePermissionsResponseDto` (9 flags)
@@ -337,7 +337,7 @@ Fuera de Admin, el terracota es el único acento (ver §6.1). **Dentro de las pa
 
 ### 6.8 Patrón de detalle de fila — regla a mantener siempre
 
-- **Si hay algo que editar → Modal** (variante **grande**, §6.14). Ejemplo: Usuarios — modal con pestañas Perfil (username/email editables; el rol se muestra pero no es editable, no existe endpoint para cambiarlo, §5.3), Permisos (grid de 9 switches, coloreados en acento cuando están activos), Límites (storage y tamaño máximo, con el aviso del §5.4 si se intenta subir por encima del global).
+- **Si hay algo que editar → Modal** (variante **grande**, §6.14). Ejemplo: Usuarios — modal con pestañas Perfil (**solo lectura** — username, email, rol, fecha de creación; no existe endpoint para que un Admin edite el perfil de otro usuario, solo `PATCH /users/me` para editar el propio, §5.4 — si se quiere esa capacidad, hay que añadir el endpoint al backend primero), Permisos (grid de 9 switches, coloreados en acento cuando están activos), Límites (storage y tamaño máximo, con el aviso del §5.4 si se intenta subir por encima del global).
 - **Si es solo para consultar (sin edición) → despliegue inline dentro de la fila.** Ejemplo: Logs de sistema y Auditoría — sin modal. El objetivo explícito es poder inspeccionar un log sin entrar a la base de datos, así que el despliegue muestra **todos los campos del DTO real, sin resumir ni omitir nada** (Id, Origen, fecha completa, UserId, CorrelationId, Duración, Mensaje y, si lo hay, la Excepción completa). La excepción/stack trace va en un bloque monoespaciado con altura máxima fija y scroll propio (`overflow-y: auto`, `white-space: pre-wrap`) más un botón de copiar — nunca truncada ni dejando que la fila crezca sin límite.
 
 ### 6.9 Estados vacíos
@@ -401,7 +401,7 @@ La mutation `useMoveFile()` (en `features/files/api.ts`) llama a `PATCH /files/{
 export const FILE_MOVE_ENABLED = false // cambiar a true cuando el endpoint esté confirmado (§2)
 ```
 
-- Con `false`: todo el drag & drop se construye y se comporta igual (hover, resaltado de carpetas, navegación al mantener encima del breadcrumb), pero al soltar no llama a la API ni muta nada localmente — solo muestra un toast informativo ("Mover archivos aún no está disponible") y termina ahí. No lanza error, no rompe nada.
+- Con `false`: todo el drag & drop se construye y se comporta igual (hover, resaltado de carpetas, navegación al mantener encima del breadcrumb), pero al soltar no llama a la API ni muta nada localmente — solo muestra un toast informativo ("Mover archivos aún no está disponible") y termina ahí. No lanza error, no rompe nada. `useRenameFile` comparte el mismo interruptor (es el mismo endpoint pendiente, §5.4) y su propio mensaje distinto ("Renombrar archivos aún no está disponible") cuando está en `false`.
 - Con `true`: la misma función hace la llamada real a `PATCH /files/{id}` y actualiza la caché de TanStack Query como cualquier otra mutation.
 
 Cuando el endpoint exista y esté verificado contra el código real del backend (§2), basta cambiar la constante a `true` — no hace falta tocar ningún componente de UI, el drag & drop ya está construido y probado contra el modo placeholder.

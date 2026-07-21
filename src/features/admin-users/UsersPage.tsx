@@ -1,6 +1,6 @@
-import { PlaceholderPage } from '@/shared/components/PlaceholderPage'
+import { AdminUsersPage } from './components/AdminUsersPage'
 
-// PENDIENTE: tabla real de usuarios (CLAUDE.md §6.6) en una fase posterior
+// Entrada lazy de la ruta /admin/users (CLAUDE.md §3)
 export default function UsersPage() {
-  return <PlaceholderPage title="Usuarios" description="Contenido real en una fase posterior." />
+  return <AdminUsersPage />
 }

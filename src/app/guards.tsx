@@ -38,10 +38,13 @@ export function RequireModule({ module, children }: { module: AppModule; childre
 /**
  * CLAUDE.md §5.3: guard independiente de rol Admin — módulo activado no implica
  * rol Admin, por eso este guard existe por separado de RequireModule.
+ * `fallback` permite usarlo alrededor de acciones sueltas (botones, items de
+ * menú) ocultándolas con `null` en vez de mostrar el estado vacío de página.
  */
-export function RequireAdmin({ children }: { children: ReactNode }) {
+export function RequireAdmin({ children, fallback }: { children: ReactNode; fallback?: ReactNode }) {
   const { isAdmin } = usePermissions()
   if (!isAdmin) {
+    if (fallback !== undefined) return fallback
     return (
       <EmptyState
         icon={ShieldAlert}
