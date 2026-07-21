@@ -1,6 +1,6 @@
-import { PlaceholderPage } from '@/shared/components/PlaceholderPage'
+import { FileExplorerPage } from './components/FileExplorerPage'
 
-// PENDIENTE (Fase 2): explorador real de archivos y carpetas (CLAUDE.md §6.3)
+// Entrada lazy de la ruta /files (CLAUDE.md §3)
 export default function FilesPage() {
-  return <PlaceholderPage title="Archivos" description="Contenido real en la Fase 2." />
+  return <FileExplorerPage />
 }

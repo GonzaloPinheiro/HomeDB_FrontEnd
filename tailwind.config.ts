@@ -1,3 +1,4 @@
+import animatePlugin from 'tailwindcss-animate'
 import type { Config } from 'tailwindcss'
 
 // CLAUDE.md §6.1: los colores referencian siempre las CSS variables de
@@ -71,5 +72,7 @@ export default {
       },
     },
   },
-  plugins: [],
+  // CLAUDE.md §3: tailwindcss-animate para las transiciones de apertura/cierre
+  // de los componentes Radix de shadcn (dialog, dropdown...)
+  plugins: [animatePlugin],
 } satisfies Config

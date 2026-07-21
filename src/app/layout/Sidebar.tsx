@@ -3,6 +3,8 @@ import { NavLink } from 'react-router-dom'
 
 import { Skeleton } from '@/shared/components/ui/skeleton'
 import { usePermissions } from '@/shared/hooks/usePermissions'
+
+import { StorageWidget } from './StorageWidget'
 import { cn } from '@/shared/lib/utils'
 import type { AppModule } from '@/shared/types/api'
 
@@ -94,8 +96,9 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
         </nav>
       )}
 
-      {/* PENDIENTE (CLAUDE.md §6.12): widget de almacenamiento (uso + límite) en la
-          parte inferior del sidebar expandido — Fase 2, necesita features/files */}
+      {/* CLAUDE.md §6.12/§6.2: widget de almacenamiento solo con el sidebar
+          expandido — se oculta al contraer a rail, igual que las etiquetas */}
+      {!collapsed && <StorageWidget />}
     </aside>
   )
 }

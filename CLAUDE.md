@@ -28,7 +28,7 @@ Frontend web de **HomeDB**, una API personal (ASP.NET Core 8 + PostgreSQL) que g
 - **Axios** como cliente HTTP, `withCredentials: true` siempre — la auth va por cookies, nunca por header manual (ver §5.2)
 - **Zod** para validar respuestas de API y formularios
 - **react-hook-form** + Zod para formularios
-- **Tailwind CSS + shadcn/ui** (componentes copiados al repo, no una librería opaca) + **Framer Motion** para animaciones
+- **Tailwind CSS + shadcn/ui** (componentes copiados al repo, no una librería opaca) + **tailwindcss-animate** (transiciones de apertura/cierre de los componentes Radix que trae shadcn — dropdown, etc.) + **Framer Motion** para el resto de animaciones
 - **dnd-kit** para drag & drop — basado en eventos de puntero, no en la API nativa de HTML5 Drag and Drop, porque esta última no funciona en pantallas táctiles y el proyecto se empaqueta en Capacitor pronto
 - **recharts** para los gráficos del Monitor del sistema (§6.13) — no gráficos SVG hechos a mano
 - **sonner** para toasts, restyled con los tokens de color propios (no sus estilos por defecto)
@@ -94,6 +94,8 @@ type ApiObjResponse<T> = {
 
 `errorCode` llega siempre como número. Tabla completa — mantenla en `shared/api/errors.ts` como único punto de verdad, no la reimplementes por feature:
 
+**Casing real en el wire: camelCase.** Aunque las tablas de este documento nombran los campos en PascalCase (como están en el C# del backend), ASP.NET Core los serializa en camelCase por defecto (no hay `AddJsonOptions` que lo cambie) — confirmado en julio 2026 contra el envelope, `TokenResponseDto` y los 9 flags de permisos. Los schemas de Zod usan siempre camelCase (`accessToken`, no `AccessToken`).
+
 | Código | Valor | HTTP | Significado |
 |---|---|---|---|
 | FileNotFound | 1001 | 404 | Archivo no existe o no es tuyo |
@@ -128,6 +130,7 @@ Patrón: cada mutation/query captura el error, lo pasa por `getErrorMessage(erro
 - Access token expira en **30 minutos**. Refresh token en **7 días**, con rotación.
 - `PUT /api/auth/changePassword` revoca todos los refresh tokens del usuario. Tras un cambio de contraseña con éxito, forzar logout y redirigir a login con un mensaje explicativo.
 - `POST /api/auth/logout` responde 200 aunque el token ya estuviera revocado o no existiera — no lo trates como error, simplemente limpia el estado local y navega a login.
+- **🐛 Bug confirmado (julio 2026, verificado por código y por prueba real login→refresh): `POST /api/auth/refreshToken` falla siempre con `InvalidCredentials` (1006).** En `AuthService.cs`, el login guarda `Hash(token)` en BD pero también envía ese mismo hash al cliente en vez del token en claro; al refrescar, el backend vuelve a hashear lo recibido (`Hash(Hash(token))`), que nunca coincide con lo guardado. Efecto: ninguna sesión sobrevive a un refresco de página hasta que se arregle en `HomeDB` (fuera del alcance del front — no se puede arreglar desde aquí). El front ya implementa el contrato correcto (§7.2) y funcionará sin cambios en cuanto el backend devuelva el token en claro al cliente. Mientras tanto, el fallo se maneja con gracia (sin toast, simplemente no autenticado) — es el comportamiento esperado, no un bug del front.
 - **No hay registro público.** `POST /api/auth/register` exige rol Admin. La creación de usuarios vive en `admin-users` (botón "Nuevo usuario"), no en la pantalla de login. `features/auth` solo tiene login.
 
 ### 5.3 Roles y permisos por módulo
@@ -380,7 +383,7 @@ Todo lo que sea estado de servidor pasa por TanStack Query. Un hook por recurso 
 Contexto de React: access token en memoria (solo para decodificar claims, ver §5.2), claims decodificados (`userId`, `username`, rol), funciones `login`/`logout`. Toda request va con `withCredentials: true`; nunca se adjunta un header `Authorization` manual.
 
 ### 7.3 Permisos (`shared/hooks/usePermissions`)
-Envuelve `GET /users/me/permissions` con TanStack Query. Expone `hasModule(module: AppModule)` e `isAdmin` (derivado del claim de rol). Toda comprobación de acceso —guards de ruta y botones de acción individuales— pasa por aquí, nunca se reimplementa la lógica de "¿puedo ver esto?" en una página suelta. **`hasModule()` debe devolver `true` automáticamente si `isAdmin` es `true`, sin mirar los flags reales** — replica el comportamiento del backend (§5.3: el rol Admin pasa siempre, sin comprobar módulo). Si no se replica esto, un Admin podría ver un sidebar incompleto por un dato de permisos que en su caso ni siquiera debería consultarse.
+Envuelve `GET /users/me/permissions` con TanStack Query. Expone `hasModule(module: AppModule)` e `isAdmin` (derivado del claim de rol). Toda comprobación de acceso —guards de ruta y botones de acción individuales— pasa por aquí, nunca se reimplementa la lógica de "¿puedo ver esto?" en una página suelta. **`hasModule()` debe devolver `true` automáticamente si `isAdmin` es `true`, sin mirar los flags reales** — replica el comportamiento del backend (§5.3: el rol Admin pasa siempre, sin comprobar módulo). Si no se replica esto, un Admin podría ver un sidebar incompleto por un dato de permisos que en su caso ni siquiera debería consultarse. **Validado en julio 2026**: un Admin puede no tener ni fila de permisos en BD (`GET /users/me/permissions` devolviendo 404/`PermissionsNotFound`) — por eso la query debe ir con `enabled: !isAdmin` (nunca dispararse para un Admin), no solo ignorar el resultado si llega.
 
 ### 7.4 Subida de archivos (`shared/hooks/useUploadFile`)
 Ver §6.5 — es la única vía para subir archivos en todo el proyecto.
