@@ -5,18 +5,13 @@
 /*
  * CLAUDE.md §6.1: tokens de color de la app. Tema claro en :root, tema oscuro
  * bajo .dark (darkMode: 'class' en Tailwind, la clase se aplica sobre <html>).
- * Valores hexadecimales exactos de la tabla de §6.1 — no cambiarlos aquí sin
- * actualizar también el documento.
- *
- * Donde §6.1 da dos valores para un mismo token (--text-muted), el segundo se
- * expone como --text-muted-2. Los tokens que la tabla de un tema no define se
- * mapean al token existente más cercano de ese mismo tema (sin inventar hex
- * nuevos); están marcados con "mapeado".
+ * Valores hexadecimales exactos de las tablas de §6.1 — si hace falta un token
+ * nuevo, se añade primero a esa tabla (claro y oscuro), no solo aquí.
  */
 :root {
   --bg: #faf9f5;
   --surface: #f3efe4;
-  --surface-alt: #f3efe4; /* mapeado: §6.1 solo define surface-alt en oscuro */
+  --surface-alt: #ede9dc;
   --card: #fffdfa;
   --border: #e5e0d3;
   --border-light: #ede9dc;
@@ -28,9 +23,9 @@
   --accent: #c1592f;
   --accent-tint-bg: #f3ddcc;
   --accent-tint-text: #8a3a1e;
-  --text-on-accent: #fffdfa; /* mapeado: §6.1 solo lo define en oscuro; en claro se usa el tono de card */
+  --text-on-accent: #fff8f2;
 
-  /* Semántico (§6.1): mismos valores en ambos temas mientras la tabla no defina variantes oscuras */
+  /* Semántico (§6.1): deliberadamente el mismo valor en ambos temas */
   --warning-bg: #fbefd7;
   --warning-text: #8b6115;
   --critical-bg: #f5dcd7;
@@ -41,14 +36,14 @@
   --bg: #262220;
   --surface: #2e2925;
   --surface-alt: #332d28;
-  --card: #332d28; /* mapeado: §6.1 no define card en oscuro; se usa surface-alt */
+  --card: #332d28; /* §6.1: en oscuro, mismo valor que --surface-alt */
   --border: #3d372f;
-  --border-light: #3d372f; /* mapeado: §6.1 no define border-light en oscuro; se usa border */
+  --border-light: #332d28;
   --text-primary: #f0eae0;
   --text-secondary: #a79c8c;
   --text-muted: #8a8074;
   --text-muted-2: #786f60;
-  --text-faint: #786f60; /* mapeado: §6.1 no define text-faint en oscuro; se usa text-muted-2 */
+  --text-faint: #5a5348;
   --accent: #e0834f;
   --accent-tint-bg: #4a3327;
   --accent-tint-text: #f0b594;

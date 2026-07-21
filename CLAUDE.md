@@ -22,7 +22,7 @@ Frontend web de **HomeDB**, una API personal (ASP.NET Core 8 + PostgreSQL) que g
 
 ## 3. Stack
 
-- **React 18 + TypeScript + Vite**
+- **React 19 + TypeScript + Vite**
 - **React Router** (rutas anidadas, lazy loading de páginas con `React.lazy`)
 - **TanStack Query** para todo el estado de servidor (fetch, caché, loading, error, reintentos). El único estado global "manual" es la sesión de auth (ver §7.2) — no hay Redux/Zustand.
 - **Axios** como cliente HTTP, `withCredentials: true` siempre — la auth va por cookies, nunca por header manual (ver §5.2)
@@ -233,38 +233,47 @@ Base: todas bajo `/api`, autenticadas salvo que se diga lo contrario.
 
 Definir como CSS variables en `styles/globals.css`, consumidas por Tailwind — nunca valores sueltos hardcodeados en componentes. Dos temas, cambio por clase (`darkMode: 'class'` en Tailwind), aplicados sobre `<html>`. Se detecta `prefers-color-scheme` por defecto, con override manual guardado solo en el dispositivo (`localStorage`) — no existe campo de preferencia de tema en el backend todavía (podría añadirse como `ThemePreference` en `UserSettings` si algún día se quiere sincronizar entre dispositivos, pero no es necesario para empezar).
 
+Cada tabla cubre **todos** los tokens usados en el resto del documento para ambos temas — si en algún componente hace falta un token que no está aquí, añádelo a esta tabla primero (con su valor en claro y en oscuro) en vez de inventarlo solo en el CSS.
+
 **Claro:**
 | Token | Valor | Uso |
 |---|---|---|
 | `--bg` | `#FAF9F5` | Fondo de página |
 | `--surface` | `#F3EFE4` | Sidebar, inputs, cabeceras de tabla |
+| `--surface-alt` | `#EDE9DC` | Paneles anidados dentro de una superficie (ej. detalle expandido de una fila) |
 | `--card` | `#FFFDFA` | Modales, tarjetas |
 | `--border` | `#E5E0D3` | Borde por defecto |
 | `--border-light` | `#EDE9DC` | Separadores internos |
 | `--text-primary` | `#33302A` | Texto principal (nunca negro puro) |
 | `--text-secondary` | `#6B675D` | Texto secundario |
-| `--text-muted` | `#8A867A` / `#A6A192` | Texto terciario/hints |
+| `--text-muted` | `#8A867A` | Texto terciario/hints |
+| `--text-muted-2` | `#A6A192` | Segundo tono de muted, ligeramente más claro (metadatos, fechas en tablas) |
 | `--text-faint` | `#C9C4B4` | Iconos decorativos, chevrons |
 | `--accent` | `#C1592F` | Terracota — único acento fuera de Admin |
 | `--accent-tint-bg` | `#F3DDCC` | Fondo de estado activo/badge |
 | `--accent-tint-text` | `#8A3A1E` | Texto sobre `accent-tint-bg` |
+| `--text-on-accent` | `#FFF8F2` | Texto sobre botones rellenos de `--accent` (crema casi blanco) |
 
 **Oscuro:**
-| Token | Valor |
-|---|---|
-| `--bg` | `#262220` |
-| `--surface` | `#2E2925` |
-| `--surface-alt` | `#332D28` |
-| `--border` | `#3D372F` |
-| `--text-primary` | `#F0EAE0` |
-| `--text-secondary` | `#A79C8C` |
-| `--text-muted` | `#8A8074` / `#786F60` |
-| `--accent` | `#E0834F` (terracota aclarado para contraste) |
-| `--accent-tint-bg` | `#4A3327` |
-| `--accent-tint-text` | `#F0B594` |
-| `--text-on-accent` | `#2A1B10` (texto oscuro sobre botones con `--accent`, que en dark mode es claro) |
+| Token | Valor | Uso |
+|---|---|---|
+| `--bg` | `#262220` | Fondo de página |
+| `--surface` | `#2E2925` | Sidebar, inputs, cabeceras de tabla |
+| `--surface-alt` | `#332D28` | Paneles anidados dentro de una superficie |
+| `--card` | `#332D28` | Modales, tarjetas (mismo valor que `--surface-alt` en oscuro) |
+| `--border` | `#3D372F` | Borde por defecto |
+| `--border-light` | `#332D28` | Separadores internos |
+| `--text-primary` | `#F0EAE0` | Texto principal (nunca blanco puro) |
+| `--text-secondary` | `#A79C8C` | Texto secundario |
+| `--text-muted` | `#8A8074` | Texto terciario/hints |
+| `--text-muted-2` | `#786F60` | Segundo tono de muted, más apagado |
+| `--text-faint` | `#5A5348` | Iconos decorativos, chevrons |
+| `--accent` | `#E0834F` | Terracota aclarado para contraste sobre fondo oscuro |
+| `--accent-tint-bg` | `#4A3327` | Fondo de estado activo/badge |
+| `--accent-tint-text` | `#F0B594` | Texto sobre `accent-tint-bg` |
+| `--text-on-accent` | `#2A1B10` | Texto oscuro sobre botones con `--accent` (que en dark mode es un tono claro) |
 
-**Semántico (excepción deliberada a "un único acento", ver §6.7):**
+**Semántico (excepción deliberada a "un único acento", ver §6.7) — mismo valor en ambos temas:**
 | Estado | Fondo | Texto |
 |---|---|---|
 | Warning | `#FBEFD7` | `#8B6115` |
@@ -395,7 +404,7 @@ Cuando el endpoint exista y esté verificado contra el código real del backend 
 `react-hook-form` + `zodResolver`. El schema de Zod vive junto al formulario en la misma feature (`schemas.ts`).
 
 ### 7.7 Variables de entorno (`shared/env.ts`)
-Un único `VITE_API_URL`, validado con Zod al arrancar la app — si falta o es inválido, la app falla de forma clara al inicio, en vez de fallar de forma rara en la primera request.
+Un único `VITE_API_URL`, validado con Zod al arrancar la app — si falta o es inválido, la app falla de forma clara al inicio, en vez de fallar de forma rara en la primera request. **El valor correcto (puerto/host real del backend en desarrollo) se confirma revisando `HomeDB/`** (`appsettings.Development.json`, `docker-compose.yml`, o similar) — no lo asumas ni copies un puerto de ejemplo sin verificarlo.
 
 ### 7.8 Estadísticas de almacenamiento (dos queries independientes)
 Ver §6.12. `useStorageUsage()` (→ `/statistics/storage`) y `useStorageLimit()` (→ `/users/me/settings-overview`) son queries separadas de TanStack Query con claves distintas. Las mutations de `features/files` (subir, borrar archivo, borrar carpeta) invalidan solo la clave de `useStorageUsage`, nunca la de `useStorageLimit`.
