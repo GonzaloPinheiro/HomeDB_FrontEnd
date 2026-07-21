@@ -1,3 +1,4 @@
+import { useDraggable, useDroppable } from '@dnd-kit/core'
 import {
   Download,
   FileArchive,
@@ -7,6 +8,7 @@ import {
   FileText,
   FileVideo,
   Folder,
+  FolderInput,
   MoreVertical,
   Pencil,
   Trash2,
@@ -28,22 +30,22 @@ import type { ExplorerItem } from '../types'
 
 // Componente estático (no un componente creado en render): el tipo de archivo
 // se transmite solo con el icono — no hay columna "Tipo" (§6.3)
-function ItemIcon({ item }: { item: ExplorerItem }) {
+export function ItemIcon({ item, className }: { item: ExplorerItem; className?: string }) {
   if (item.kind === 'folder') {
-    return <Folder className="h-5 w-5 shrink-0 text-accent" aria-hidden />
+    return <Folder className={cn('h-5 w-5 shrink-0 text-accent', className)} aria-hidden />
   }
-  const className = 'h-5 w-5 shrink-0 text-text-muted'
+  const classes = cn('h-5 w-5 shrink-0 text-text-muted', className)
   const contentType = item.contentType
-  if (contentType.startsWith('image/')) return <FileImage className={className} aria-hidden />
-  if (contentType.startsWith('video/')) return <FileVideo className={className} aria-hidden />
-  if (contentType.startsWith('audio/')) return <FileAudio className={className} aria-hidden />
+  if (contentType.startsWith('image/')) return <FileImage className={classes} aria-hidden />
+  if (contentType.startsWith('video/')) return <FileVideo className={classes} aria-hidden />
+  if (contentType.startsWith('audio/')) return <FileAudio className={classes} aria-hidden />
   if (contentType === 'application/pdf' || contentType.startsWith('text/')) {
-    return <FileText className={className} aria-hidden />
+    return <FileText className={classes} aria-hidden />
   }
   if (contentType.includes('zip') || contentType.includes('compressed')) {
-    return <FileArchive className={className} aria-hidden />
+    return <FileArchive className={classes} aria-hidden />
   }
-  return <FileIcon className={className} aria-hidden />
+  return <FileIcon className={classes} aria-hidden />
 }
 
 type FileRowProps = {
@@ -51,14 +53,32 @@ type FileRowProps = {
   onEnterFolder: (item: ExplorerItem) => void
   onDownload: (item: ExplorerItem) => void
   onRename: (item: ExplorerItem) => void
+  onMove: (item: ExplorerItem) => void
   onDelete: (item: ExplorerItem) => void
 }
 
 // CLAUDE.md §6.3: fila unificada — carpeta y archivo comparten estructura,
 // diferenciados solo por el icono. Toda la fila de una carpeta es clicable
-// para entrar, sin chevron de afordancia.
-export function FileRow({ item, onEnterFolder, onDownload, onRename, onDelete }: FileRowProps) {
+// para entrar, sin chevron de afordancia. Drag & drop con dnd-kit (sensores
+// de puntero, §7.5): los archivos son arrastrables; las carpetas, destinos.
+export function FileRow({ item, onEnterFolder, onDownload, onRename, onMove, onDelete }: FileRowProps) {
   const isFolder = item.kind === 'folder'
+
+  const {
+    setNodeRef: setDragRef,
+    listeners,
+    attributes,
+    isDragging,
+  } = useDraggable({
+    id: `file-${item.id}`,
+    disabled: isFolder, // solo archivos se arrastran en esta fase (carpetas: Fase futura)
+    data: { item },
+  })
+  const { setNodeRef: setDropRef, isOver } = useDroppable({
+    id: `folder-${item.id}`,
+    disabled: !isFolder,
+    data: { type: 'folder', folderId: item.id },
+  })
 
   const activate = () => {
     if (isFolder) onEnterFolder(item)
@@ -75,13 +95,27 @@ export function FileRow({ item, onEnterFolder, onDownload, onRename, onDelete }:
 
   return (
     <div
+      ref={(element) => {
+        setDragRef(element)
+        setDropRef(element)
+      }}
       role={isFolder ? 'button' : undefined}
       tabIndex={isFolder ? 0 : undefined}
       onClick={activate}
       onKeyDown={onKeyDown}
+      // Listeners/atributos de arrastre solo en archivos: una carpeta (draggable
+      // deshabilitado) no debe heredar aria-disabled ni listeners inertes
+      {...(isFolder ? {} : { ...listeners, ...attributes })}
       className={cn(
-        'group flex items-center gap-3 rounded-lg px-3 py-2.5 transition-colors',
-        isFolder && 'cursor-pointer hover:bg-surface-alt focus-visible:bg-surface-alt focus-visible:outline-none',
+        // touch-manipulation (no touch-none): conserva el scroll táctil de la
+        // lista (§10) — en táctil, mover archivos tiene su alternativa en
+        // "Mover a…" (§11)
+        'group flex touch-manipulation items-center gap-3 rounded-lg px-3 py-2.5 transition-colors',
+        isFolder &&
+          'cursor-pointer hover:bg-surface-alt focus-visible:bg-surface-alt focus-visible:outline-none',
+        // §6.3: resaltar la carpeta mientras un archivo se arrastra encima
+        isOver && 'bg-accent-tint-bg ring-1 ring-accent',
+        isDragging && 'opacity-40',
       )}
     >
       <ItemIcon item={item} />
@@ -93,10 +127,10 @@ export function FileRow({ item, onEnterFolder, onDownload, onRename, onDelete }:
         {formatShortDate(item.createdAt)}
       </span>
 
-      {/* Menú contextual — Fase 2a: Descargar / Renombrar / Eliminar.
-          PENDIENTE (Fase 2b): acción "Mover a…" (CLAUDE.md §11).
-          PENDIENTE (CLAUDE.md §5.4): renombrar archivos no tiene endpoint aún —
-          solo las carpetas ofrecen Renombrar. */}
+      {/* Menú contextual: Descargar / Mover a… / Renombrar / Eliminar.
+          Mover y renombrar archivos van detrás de FILE_MOVE_ENABLED (§7.5) —
+          la UI se ofrece igual y termina en toast informativo mientras el
+          endpoint no exista. */}
       <div onClick={stop}>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -111,17 +145,22 @@ export function FileRow({ item, onEnterFolder, onDownload, onRename, onDelete }:
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             {item.kind === 'file' && (
-              <DropdownMenuItem onSelect={() => onDownload(item)}>
-                <Download />
-                Descargar
-              </DropdownMenuItem>
+              <>
+                <DropdownMenuItem onSelect={() => onDownload(item)}>
+                  <Download />
+                  Descargar
+                </DropdownMenuItem>
+                {/* CLAUDE.md §11: alternativa sin arrastrar, necesaria para teclado/táctil */}
+                <DropdownMenuItem onSelect={() => onMove(item)}>
+                  <FolderInput />
+                  Mover a…
+                </DropdownMenuItem>
+              </>
             )}
-            {isFolder && (
-              <DropdownMenuItem onSelect={() => onRename(item)}>
-                <Pencil />
-                Renombrar
-              </DropdownMenuItem>
-            )}
+            <DropdownMenuItem onSelect={() => onRename(item)}>
+              <Pencil />
+              Renombrar
+            </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => onDelete(item)} className="text-critical-text">
               <Trash2 />
               Eliminar

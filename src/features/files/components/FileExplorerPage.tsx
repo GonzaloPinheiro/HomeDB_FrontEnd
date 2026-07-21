@@ -1,3 +1,13 @@
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragOverEvent,
+  type DragStartEvent,
+} from '@dnd-kit/core'
 import { CircleAlert, FolderOpen, FolderPlus, SearchX, Upload } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
@@ -9,14 +19,16 @@ import { Button } from '@/shared/components/ui/button'
 import { Input } from '@/shared/components/ui/input'
 import { useDebounce } from '@/shared/hooks/useDebounce'
 
-import { downloadFile, useFolderContents } from '../api'
+import { downloadFile, useFolderContents, useMoveFile } from '../api'
 import { sortExplorerItems, type SortDirection, type SortKey } from '../sort'
 import type { ExplorerItem } from '../types'
+import { useDwell } from '../useDwell'
 import { Breadcrumb, type Crumb } from './Breadcrumb'
 import { CreateFolderModal } from './CreateFolderModal'
 import { DeleteConfirmModal } from './DeleteConfirmModal'
 import { FileListSkeleton } from './FileListSkeleton'
-import { FileRow } from './FileRow'
+import { FileRow, ItemIcon } from './FileRow'
+import { MoveFileModal } from './MoveFileModal'
 import { RenameModal } from './RenameModal'
 import { SortableHeader } from './SortableHeader'
 import { UploadModal } from './UploadModal'
@@ -27,8 +39,11 @@ type ModalState =
   | { type: 'create' }
   | { type: 'upload' }
   | { type: 'rename'; item: ExplorerItem }
+  | { type: 'move'; item: ExplorerItem }
   | { type: 'delete'; item: ExplorerItem }
   | null
+
+type DropTargetData = { type?: 'folder' | 'crumb'; folderId?: number | null; index?: number }
 
 export function FileExplorerPage() {
   // La carpeta actual vive en la URL: sobrevive a un refresco y es compartible
@@ -58,7 +73,8 @@ export function FileExplorerPage() {
   }, [trail, folderId])
 
   // CLAUDE.md §11: evitar que soltar un archivo fuera de la zona de subida haga
-  // que el navegador lo abra y saque al usuario de la app
+  // que el navegador lo abra y saque al usuario de la app. No interfiere con
+  // dnd-kit: sus sensores usan eventos de puntero, no HTML5 dragover/drop.
   useEffect(() => {
     const prevent = (event: Event) => event.preventDefault()
     document.addEventListener('dragover', prevent)
@@ -70,6 +86,12 @@ export function FileExplorerPage() {
   }, [])
 
   const contents = useFolderContents(folderId)
+  const moveFile = useMoveFile(folderId)
+
+  // Drag & drop (§6.3/§7.5): sensores de puntero, nunca HTML5 DnD (§10)
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
+  const [activeDrag, setActiveDrag] = useState<ExplorerItem | null>(null)
+  const [dwellKey, setDwellKey] = useState<string | null>(null)
 
   const navigateTo = (crumbId: number | null) => {
     setSearch('')
@@ -79,6 +101,46 @@ export function FileExplorerPage() {
   const enterFolder = (item: ExplorerItem) => {
     setTrail([...displayTrail, { id: item.id, name: item.name }])
     navigateTo(item.id)
+  }
+
+  const goToCrumb = (index: number) => {
+    setTrail(displayTrail.slice(0, index + 1))
+    navigateTo(displayTrail[index].id)
+  }
+
+  // §6.3: mantener el arrastre ~800ms sobre un segmento del breadcrumb navega
+  // a esa carpeta sin soltar (se cancela al salir de encima o soltar antes)
+  useDwell(dwellKey, (key) => {
+    const index = Number(key.slice('crumb-'.length))
+    if (Number.isInteger(index) && index >= 0 && index < displayTrail.length) {
+      goToCrumb(index)
+    }
+  })
+
+  const onDragStart = (event: DragStartEvent) => {
+    const item = event.active.data.current?.item as ExplorerItem | undefined
+    setActiveDrag(item ?? null)
+  }
+
+  const onDragOver = (event: DragOverEvent) => {
+    const target = event.over?.data.current as DropTargetData | undefined
+    setDwellKey(target?.type === 'crumb' && target.index !== undefined ? `crumb-${target.index}` : null)
+  }
+
+  const onDragCancel = () => {
+    setActiveDrag(null)
+    setDwellKey(null)
+  }
+
+  const onDragEnd = (event: DragEndEvent) => {
+    setActiveDrag(null)
+    setDwellKey(null)
+    const item = event.active.data.current?.item as ExplorerItem | undefined
+    const target = event.over?.data.current as DropTargetData | undefined
+    if (!item || item.kind !== 'file' || !target?.type) return
+    const targetFolderId = target.folderId ?? null
+    if (targetFolderId === folderId) return // soltar en la carpeta actual no mueve nada
+    moveFile.mutate({ fileId: item.id, targetFolderId })
   }
 
   const onSort = (key: SortKey) => {
@@ -111,17 +173,18 @@ export function FileExplorerPage() {
   const isSearching = debouncedSearch.trim().length > 0
 
   return (
+    <DndContext
+      sensors={sensors}
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDragEnd={onDragEnd}
+      onDragCancel={onDragCancel}
+    >
     <div className="flex min-h-full flex-col gap-4 p-4 md:p-6">
       {/* Cabecera del panel (§6.2): breadcrumb + buscador + acciones */}
       <div className="flex flex-wrap items-center gap-3">
         <div className="min-w-0 flex-1">
-          <Breadcrumb
-            crumbs={displayTrail}
-            onNavigate={(index) => {
-              setTrail(displayTrail.slice(0, index + 1))
-              navigateTo(displayTrail[index].id)
-            }}
-          />
+          <Breadcrumb crumbs={displayTrail} onNavigate={goToCrumb} />
         </div>
         <Input
           value={search}
@@ -218,6 +281,7 @@ export function FileExplorerPage() {
               onEnterFolder={enterFolder}
               onDownload={onDownload}
               onRename={(target) => setModal({ type: 'rename', item: target })}
+              onMove={(target) => setModal({ type: 'move', item: target })}
               onDelete={(target) => setModal({ type: 'delete', item: target })}
             />
           ))}
@@ -239,9 +303,29 @@ export function FileExplorerPage() {
       {modal?.type === 'rename' && (
         <RenameModal open onClose={() => setModal(null)} parentFolderId={folderId} item={modal.item} />
       )}
+      {modal?.type === 'move' && (
+        <MoveFileModal
+          open
+          onClose={() => setModal(null)}
+          currentFolderId={folderId}
+          currentFolderName={currentFolderName}
+          item={modal.item}
+        />
+      )}
       {modal?.type === 'delete' && (
         <DeleteConfirmModal open onClose={() => setModal(null)} parentFolderId={folderId} item={modal.item} />
       )}
     </div>
+
+    {/* Vista fantasma del archivo mientras se arrastra */}
+    <DragOverlay dropAnimation={null}>
+      {activeDrag ? (
+        <div className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm text-text-primary shadow-md">
+          <ItemIcon item={activeDrag} className="h-4 w-4" />
+          <span className="max-w-56 truncate">{activeDrag.name}</span>
+        </div>
+      ) : null}
+    </DragOverlay>
+    </DndContext>
   )
 }

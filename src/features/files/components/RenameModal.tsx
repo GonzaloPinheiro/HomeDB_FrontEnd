@@ -16,7 +16,7 @@ import {
 } from '@/shared/components/ui/form'
 import { Input } from '@/shared/components/ui/input'
 
-import { useRenameFolder } from '../api'
+import { useRenameFile, useRenameFolder } from '../api'
 import { folderNameSchema, type FolderNameValues } from '../schemas'
 import type { ExplorerItem } from '../types'
 
@@ -24,25 +24,24 @@ type RenameModalProps = {
   open: boolean
   onClose: () => void
   parentFolderId: number | null
-  /**
-   * Hoy solo llegan carpetas: no existe endpoint para renombrar archivos
-   * (verificado julio 2026 — FilesController no tiene PATCH). El modal ya
-   * contempla ambos tipos para cuando exista: con un archivo preseleccionaría
-   * el nombre sin la extensión (§11).
-   */
   item: ExplorerItem
 }
 
+// CLAUDE.md §6.4: renombrar — modal pequeño. Carpetas usan PATCH /folders;
+// archivos van por useRenameFile (§7.5: detrás de FILE_MOVE_ENABLED mientras
+// PATCH /files/{id} no exista en el backend).
 export function RenameModal({ open, onClose, parentFolderId, item }: RenameModalProps) {
-  const mutation = useRenameFolder(parentFolderId)
+  const renameFolder = useRenameFolder(parentFolderId)
+  const renameFile = useRenameFile(parentFolderId)
+  const isPending = renameFolder.isPending || renameFile.isPending
   const inputRef = useRef<HTMLInputElement | null>(null)
   const form = useForm<FolderNameValues>({
     resolver: zodResolver(folderNameSchema),
     values: { name: item.name },
   })
 
-  // CLAUDE.md §11: al renombrar un archivo se preselecciona el nombre SIN la
-  // extensión (como Explorer/Finder); una carpeta, el nombre completo.
+  // CLAUDE.md §11: un archivo preselecciona el nombre SIN la extensión (como
+  // Explorer/Finder); una carpeta, el nombre completo.
   useEffect(() => {
     if (!open) return
     const input = inputRef.current
@@ -58,16 +57,20 @@ export function RenameModal({ open, onClose, parentFolderId, item }: RenameModal
   }
 
   const submit = form.handleSubmit((values) => {
-    if (item.kind !== 'folder') return // PENDIENTE (CLAUDE.md §5.4): sin endpoint de renombrar archivos
-    mutation.mutate(
-      { folderId: item.id, newName: values.name },
-      {
-        onSuccess: () => {
-          toast.success('Carpeta renombrada')
-          close()
+    if (item.kind === 'folder') {
+      renameFolder.mutate(
+        { folderId: item.id, newName: values.name },
+        {
+          onSuccess: () => {
+            toast.success('Carpeta renombrada')
+            close()
+          },
         },
-      },
-    )
+      )
+    } else {
+      // Con FILE_MOVE_ENABLED=false termina en el toast informativo del hook
+      renameFile.mutate({ fileId: item.id, newName: values.name }, { onSuccess: close })
+    }
   })
 
   return (
@@ -98,8 +101,8 @@ export function RenameModal({ open, onClose, parentFolderId, item }: RenameModal
             <Button type="button" variant="outline" onClick={close}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={mutation.isPending}>
-              {mutation.isPending ? <Loader2 className="animate-spin" /> : null}
+            <Button type="submit" disabled={isPending}>
+              {isPending ? <Loader2 className="animate-spin" /> : null}
               Guardar
             </Button>
           </div>

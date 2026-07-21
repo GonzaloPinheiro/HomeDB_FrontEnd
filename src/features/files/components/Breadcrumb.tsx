@@ -1,3 +1,4 @@
+import { useDroppable } from '@dnd-kit/core'
 import { ChevronRight } from 'lucide-react'
 import { Fragment } from 'react'
 
@@ -30,6 +31,45 @@ function toSegments(crumbs: Crumb[]): Segment[] {
   ]
 }
 
+// CLAUDE.md §6.3: cada segmento del breadcrumb (salvo el actual) es destino de
+// drop para mover un archivo a esa carpeta ancestro; mantener el arrastre
+// encima ~800ms navega ahí (useDwell, gestionado por la página).
+function BreadcrumbSegment({
+  crumb,
+  index,
+  isCurrent,
+  onNavigate,
+}: {
+  crumb: Crumb
+  index: number
+  isCurrent: boolean
+  onNavigate: (index: number) => void
+}) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: `crumb-${index}`,
+    disabled: isCurrent, // soltar sobre la carpeta actual no es un movimiento
+    data: { type: 'crumb', folderId: crumb.id, index },
+  })
+
+  return (
+    <button
+      ref={setNodeRef}
+      type="button"
+      onClick={() => onNavigate(index)}
+      disabled={isCurrent}
+      className={cn(
+        'max-w-40 truncate rounded px-1 py-0.5',
+        isCurrent
+          ? 'font-medium text-text-primary'
+          : 'text-text-secondary hover:bg-surface-alt hover:text-text-primary',
+        isOver && 'bg-accent-tint-bg text-accent-tint-text ring-1 ring-accent',
+      )}
+    >
+      {crumb.name}
+    </button>
+  )
+}
+
 export function Breadcrumb({ crumbs, onNavigate }: BreadcrumbProps) {
   const segments = toSegments(crumbs)
   const lastIndex = crumbs.length - 1
@@ -42,19 +82,12 @@ export function Breadcrumb({ crumbs, onNavigate }: BreadcrumbProps) {
           {'ellipsis' in segment ? (
             <span className="shrink-0 text-text-muted">…</span>
           ) : (
-            <button
-              type="button"
-              onClick={() => onNavigate(segment.index)}
-              disabled={segment.index === lastIndex}
-              className={cn(
-                'max-w-40 truncate rounded px-1 py-0.5',
-                segment.index === lastIndex
-                  ? 'font-medium text-text-primary'
-                  : 'text-text-secondary hover:bg-surface-alt hover:text-text-primary',
-              )}
-            >
-              {segment.crumb.name}
-            </button>
+            <BreadcrumbSegment
+              crumb={segment.crumb}
+              index={segment.index}
+              isCurrent={segment.index === lastIndex}
+              onNavigate={onNavigate}
+            />
           )}
         </Fragment>
       ))}

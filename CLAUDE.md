@@ -19,6 +19,7 @@ Frontend web de **HomeDB**, una API personal (ASP.NET Core 8 + PostgreSQL) que g
 - **No hay generación automática de tipos desde el backend.** Los tipos y schemas de Zod se escriben a mano en cada feature, a partir del contrato de §5. Es intencional: evita acoplar el build del front a que el backend esté arriba y accesible. Zod es la red de seguridad ante cambios del backend, no un generador.
 - **Nunca commitear secretos.** `.env` en `.gitignore`, `.env.example` versionado con las claves vacías/de ejemplo.
 - **No hay tests end-to-end ni de UI por ahora.** Solo tests unitarios de lo que no es visual (ver §9).
+- **Commits en `HomeDB_FrontEnd/`**: al final de cada fase, haz commit de tus propios cambios con un mensaje descriptivo, salvo que el prompt de esa fase diga explícitamente lo contrario. Esta regla es solo para este repositorio — en `HomeDB/` (el backend) los commits los hace siempre el usuario manualmente, nunca Claude Code, salvo que un prompt puntual lo autorice de forma explícita.
 
 ## 3. Stack
 
@@ -170,7 +171,7 @@ Base: todas bajo `/api`, autenticadas salvo que se diga lo contrario.
 - `POST /files` — `multipart/form-data: file, folderId?` → `UploadFileResponseDto` (201)
 - `GET /files/{id}` → binario directo (`PhysicalFile`), no envuelto
 - `DELETE /files/{id}` → `DeleteFileResponseDto`
-- `PATCH /files/{id}` — **⚠️ pendiente de construir en el backend, tratar como existente** — `{ FolderId: int? }` (null = mover a raíz) → `GetFileItemDto`. Necesario para el drag & drop de archivos (§6.4). Errores esperables: `FileNotFound` (1001), `FolderNotFound` (1002). **Confirma la forma real de este endpoint contra el código del backend en cuanto exista, antes de darlo por definitivo.** Mientras tanto, el front lo llama detrás de un interruptor (`FILE_MOVE_ENABLED`, ver §7.5) para no depender de que exista antes de tiempo.
+- `PATCH /files/{id}` — **⚠️ pendiente de construir en el backend, tratar como existente** — `{ FolderId?: int | null, FileName?: string }` (`FolderId: null` = mover a raíz; ambos campos opcionales e independientes, igual que hace `Folders` con `NewParentFolderId`/`NewFolderName`) → `GetFileItemDto`. Necesario para el drag & drop de archivos (§6.4) **y también para poder renombrar un archivo** — confirmado en julio 2026 que `FilesController` no tiene NINGÚN `PATCH` hoy (ni para mover ni para renombrar), así que el front solo ofrece "Renombrar" en carpetas hasta que este endpoint exista. Errores esperables: `FileNotFound` (1001), `FolderNotFound` (1002). **Confirma la forma real de este endpoint contra el código del backend en cuanto exista, antes de darlo por definitivo.** Mientras tanto, el front lo llama detrás de un interruptor (`FILE_MOVE_ENABLED`, ver §7.5) para no depender de que exista antes de tiempo.
 - **Búsqueda — no existe endpoint global todavía.** Solo hay listado por `folderId`, no una búsqueda que recorra todo el árbol. El buscador de la UI filtra en cliente, solo entre lo ya cargado de la carpeta actual (ver §6.3) — es un punto de extensión preparado, no una funcionalidad completa. Márcalo en el código (`// PENDIENTE (CLAUDE.md §5.4): sustituir por búsqueda global cuando exista el endpoint`).
 
 **Folders** (módulo `Files`)
@@ -228,7 +229,7 @@ Base: todas bajo `/api`, autenticadas salvo que se diga lo contrario.
 - CORS del backend hoy solo permite `http://localhost:5173`. Cuando el proyecto nuevo tenga su propio puerto/dominio, pide al usuario que añada ese origen en `Cors:AllowedOrigins` del backend — el front no puede arreglar esto por su cuenta.
 - Fechas mezcladas entre `DateTime` (UTC) y `DateTimeOffset`, pero ambas serializan con sufijo `Z`. Trátalas siempre como string ISO con un único helper (`shared/lib/formatDate.ts`).
 - La subida de archivos hoy es un único `POST` multipart. El usuario planea migrar a un sistema de subida por paquetes más adelante — por eso la subida vive detrás de `useUploadFile` (ver §6.5), para que ese cambio no obligue a tocar componentes de UI.
-- **`GET /users/me/settings-overview` devuelve el límite de storage sin resolver.** `Limits.StorageLimitBytes` puede llegar `null` si el usuario no tiene un override propio — el backend no aplica ahí la misma resolución (`GetEffectiveSettingsAsync`) que sí usa al subir un archivo. Lo ideal es que el usuario ajuste el backend para que este endpoint devuelva ya el valor efectivo resuelto. **Mientras tanto, si llega `null`, el front no debe asumir el valor global hardcodeado** (se desincronizaría si cambia `appsettings.json`) — mostrar solo el uso, sin comparar contra un límite (ver §6.12).
+- **`GET /users/me/settings-overview` devuelve el límite de storage sin resolver — matizado en julio 2026.** `Limits.StorageLimitBytes` puede llegar `null` si el usuario no tiene un override propio. **Verificado en la Fase 2a**: un usuario creado correctamente vía `/auth/register` sí obtuvo valores resueltos (10 GB / 500 MB) — el caso `null` parece darse solo con usuarios mal aprovisionados (insertados a mano en BD sin las filas de settings que crea el flujo normal de registro), no como comportamiento general del endpoint. Aun así, **el front sigue sin asumir nunca un valor global hardcodeado** si llega `null` — mostrar solo el uso, sin comparar contra un límite (ver §6.12). Barato de mantener como red de seguridad aunque el caso sea raro.
 
 ## 6. Diseño visual
 
@@ -350,6 +351,8 @@ Skeletons con la misma forma que el contenido real (filas de tabla, no un spinne
 ### 6.11 Toasts
 
 `sonner`, restyled con los tokens propios (no su estilo por defecto), posición abajo a la derecha, cierre automático y manual. Icono dentro de un círculo tintado (check en tono acento para éxito, alert-triangle en tono semántico de error para fallo). Copy conciso y concreto: sin prefijo "Error:", sin relleno tipo "correctamente"/"con éxito". Los toasts de error muestran el mensaje real mapeado del diccionario de errores (§5.1) siempre que el código sea conocido.
+
+**Excepción — operaciones por lote:** cuando una acción dispara varias operaciones independientes a la vez (ej. subir varios archivos en el mismo modal, §6.4), un error puntual de una de ellas se muestra **en la fila/ítem correspondiente dentro del propio modal**, no como un toast — evita que subir 5 archivos con 1 fallido dispare un toast de más en medio de los demás. Los toasts siguen siendo la vía por defecto para cualquier acción única (crear, renombrar, eliminar, etc.).
 
 ### 6.12 Widget de almacenamiento del sidebar
 

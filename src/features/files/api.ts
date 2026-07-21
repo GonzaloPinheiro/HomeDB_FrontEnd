@@ -17,6 +17,13 @@ import {
   type ExplorerItem,
 } from './types'
 
+// CLAUDE.md §7.5: interruptor único de PATCH /files/{id} (mover Y renombrar
+// archivos — mismo endpoint pendiente, un solo flag). Verificado en julio 2026:
+// FilesController aún no tiene ningún PATCH. Cambiar a true cuando el endpoint
+// esté confirmado contra el código real del backend (§2). La anotación :boolean
+// es deliberada — evita que TS estreche el literal y marque código inalcanzable.
+export const FILE_MOVE_ENABLED: boolean = false
+
 // Claves de query de la feature. CLAUDE.md §7.8: uso y límite de almacenamiento
 // son queries INDEPENDIENTES con claves distintas — las mutations invalidan solo
 // la de uso, nunca la de límite.
@@ -154,6 +161,68 @@ export function useUploadFile() {
       void queryClient.invalidateQueries({ queryKey: filesKeys.storageUsage })
     },
     // Sin toast aquí: el error se muestra en la fila del archivo (UploadModal)
+  })
+}
+
+/**
+ * CLAUDE.md §6.3/§7.5: mover un archivo a otra carpeta (drag & drop y "Mover
+ * a…"). Con FILE_MOVE_ENABLED en false no llama a la API ni muta nada — solo
+ * el toast informativo. Con true: PATCH /files/{id} { folderId } (null = raíz)
+ * e invalida el contenido de origen y destino. NO invalida useStorageUsage:
+ * mover no cambia el total ocupado, solo su ubicación.
+ */
+export function useMoveFile(sourceFolderId: number | null) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async ({
+      fileId,
+      targetFolderId,
+    }: {
+      fileId: number
+      targetFolderId: number | null
+    }) => {
+      if (!FILE_MOVE_ENABLED) return null
+      const response = await api.patch<ApiObjResponse<unknown>>(`/files/${fileId}`, {
+        folderId: targetFolderId,
+      })
+      return fileItemSchema.parse(unwrap(response.data))
+    },
+    onSuccess: (_moved, variables) => {
+      if (!FILE_MOVE_ENABLED) {
+        toast('Mover archivos aún no está disponible')
+        return
+      }
+      void queryClient.invalidateQueries({ queryKey: filesKeys.contents(sourceFolderId) })
+      void queryClient.invalidateQueries({ queryKey: filesKeys.contents(variables.targetFolderId) })
+      toast.success('Archivo movido')
+    },
+    onError: toastError,
+  })
+}
+
+/**
+ * CLAUDE.md §5.4/§7.5: renombrar un archivo — mismo endpoint pendiente que
+ * mover (PATCH /files/{id} { fileName }), mismo interruptor FILE_MOVE_ENABLED.
+ */
+export function useRenameFile(folderId: number | null) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ fileId, newName }: { fileId: number; newName: string }) => {
+      if (!FILE_MOVE_ENABLED) return null
+      const response = await api.patch<ApiObjResponse<unknown>>(`/files/${fileId}`, {
+        fileName: newName,
+      })
+      return fileItemSchema.parse(unwrap(response.data))
+    },
+    onSuccess: () => {
+      if (!FILE_MOVE_ENABLED) {
+        toast('Renombrar archivos aún no está disponible')
+        return
+      }
+      void queryClient.invalidateQueries({ queryKey: filesKeys.contents(folderId) })
+      toast.success('Archivo renombrado')
+    },
+    onError: toastError,
   })
 }
 
