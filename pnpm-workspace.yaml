@@ -1,3 +1,9 @@
+# Workspace de un solo paquete (este mismo directorio) — declarado explícitamente
+# para que herramientas como el CLI de shadcn no intenten resolver un monorepo
+# fuera de esta carpeta.
+packages:
+  - '.'
+
 minimumReleaseAgeExclude:
   - react-dom@19.2.8
   - react@19.2.8

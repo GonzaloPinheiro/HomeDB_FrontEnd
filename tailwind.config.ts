@@ -13,7 +13,10 @@ export default {
           DEFAULT: 'var(--surface)',
           alt: 'var(--surface-alt)',
         },
-        card: 'var(--card)',
+        card: {
+          DEFAULT: 'var(--card)',
+          foreground: 'var(--text-primary)',
+        },
         border: {
           DEFAULT: 'var(--border)',
           light: 'var(--border-light)',
@@ -38,6 +41,32 @@ export default {
         critical: {
           bg: 'var(--critical-bg)',
           text: 'var(--critical-text)',
+        },
+        // Alias semánticos que esperan los componentes de shadcn/ui — mapean a las
+        // mismas CSS variables de §6.1, nunca a valores nuevos.
+        background: 'var(--bg)',
+        foreground: 'var(--text-primary)',
+        input: 'var(--border)',
+        ring: 'var(--accent)',
+        primary: {
+          DEFAULT: 'var(--accent)',
+          foreground: 'var(--text-on-accent)',
+        },
+        secondary: {
+          DEFAULT: 'var(--surface)',
+          foreground: 'var(--text-primary)',
+        },
+        muted: {
+          DEFAULT: 'var(--surface)',
+          foreground: 'var(--text-secondary)',
+        },
+        popover: {
+          DEFAULT: 'var(--card)',
+          foreground: 'var(--text-primary)',
+        },
+        destructive: {
+          DEFAULT: 'var(--critical-text)',
+          foreground: 'var(--critical-bg)',
         },
       },
     },
