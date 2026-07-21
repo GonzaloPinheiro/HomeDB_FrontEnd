@@ -3,7 +3,7 @@ import { useMutation } from '@tanstack/react-query'
 import { Eye, EyeOff, Loader2 } from 'lucide-react'
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
-import { Navigate, useNavigate } from 'react-router-dom'
+import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 
 import { PageSkeleton } from '@/shared/components/PageSkeleton'
 import { Button } from '@/shared/components/ui/button'
@@ -23,7 +23,10 @@ import { loginSchema, type LoginFormValues } from '../schemas'
 export default function LoginPage() {
   const { isAuthenticated, isLoading, login } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
   const [showPassword, setShowPassword] = useState(false)
+  // Mensaje informativo de un logout forzado (ej. tras cambiar la contraseña, §5.2)
+  const infoMessage = (location.state as { message?: string } | null)?.message
 
   const form = useForm<LoginFormValues>({
     resolver: zodResolver(loginSchema),
@@ -43,6 +46,12 @@ export default function LoginPage() {
       <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-8 shadow-sm">
         <h1 className="text-xl font-semibold text-text-primary">HomeDB</h1>
         <p className="mt-1 text-sm text-text-secondary">Inicia sesión para continuar</p>
+
+        {infoMessage ? (
+          <p className="mt-4 rounded-lg bg-surface px-3 py-2 text-sm text-text-secondary" role="status">
+            {infoMessage}
+          </p>
+        ) : null}
 
         <Form {...form}>
           <form

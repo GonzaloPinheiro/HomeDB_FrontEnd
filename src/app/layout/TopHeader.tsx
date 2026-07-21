@@ -1,4 +1,5 @@
-import { ChevronDown, Database, LogOut, PanelLeft } from 'lucide-react'
+import { ChevronDown, Database, LogOut, PanelLeft, Settings, ShieldCheck } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 
 import { Avatar, AvatarFallback } from '@/shared/components/ui/avatar'
 import { Button } from '@/shared/components/ui/button'
@@ -17,10 +18,11 @@ type TopHeaderProps = {
 }
 
 // CLAUDE.md §6.2: cabecera superior fija — toggle de sidebar + logo a la
-// izquierda, avatar con menú a la derecha. El menú solo tiene "Cerrar sesión"
-// por ahora; Ajustes y Mis permisos llegan en la Fase 3 (sin enlaces muertos).
+// izquierda, avatar con menú a la derecha (nombre + rol, Ajustes, Mis
+// permisos, separador, Cerrar sesión — lista pensada para crecer).
 export function TopHeader({ onToggleSidebar }: TopHeaderProps) {
   const { claims, logout } = useAuth()
+  const navigate = useNavigate()
   const initials = (claims?.username ?? '?').slice(0, 2).toUpperCase()
 
   return (
@@ -49,6 +51,15 @@ export function TopHeader({ onToggleSidebar }: TopHeaderProps) {
             <span>{claims?.username}</span>
             <span className="text-xs font-normal text-text-secondary">{claims?.role}</span>
           </DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={() => navigate('/account/settings')}>
+            <Settings />
+            Ajustes
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => navigate('/account/permissions')}>
+            <ShieldCheck />
+            Mis permisos
+          </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={() => void logout()}>
             <LogOut />

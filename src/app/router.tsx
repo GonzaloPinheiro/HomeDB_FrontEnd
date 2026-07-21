@@ -1,10 +1,12 @@
 import { LayoutGrid, SearchX } from 'lucide-react'
 import { lazy, Suspense } from 'react'
-import { Link, Navigate, Route, Routes } from 'react-router-dom'
+import { createBrowserRouter, Link, Navigate, Outlet } from 'react-router-dom'
 
 import { EmptyState } from '@/shared/components/EmptyState'
 import { PageSkeleton } from '@/shared/components/PageSkeleton'
 import { Button } from '@/shared/components/ui/button'
+import { Toaster } from '@/shared/components/ui/sonner'
+import { AuthProvider } from '@/shared/hooks/useAuth'
 import { usePermissions } from '@/shared/hooks/usePermissions'
 import type { AppModule } from '@/shared/types/api'
 
@@ -18,6 +20,8 @@ const MonitorPage = lazy(() => import('@/features/system-monitor/MonitorPage'))
 const UsersPage = lazy(() => import('@/features/admin-users/UsersPage'))
 const SystemLogsPage = lazy(() => import('@/features/admin-system-logs/SystemLogsPage'))
 const AuditLogsPage = lazy(() => import('@/features/admin-audit-logs/AuditLogsPage'))
+const AccountSettingsPage = lazy(() => import('@/features/account/AccountSettingsPage'))
+const MyPermissionsPage = lazy(() => import('@/features/account/MyPermissionsPage'))
 
 // Orden de preferencia al entrar a "/": primer módulo con acceso
 const HOME_ORDER: Array<[AppModule, string]> = [
@@ -63,69 +67,84 @@ function NotFoundPage() {
   )
 }
 
-export function AppRouter() {
+// Capa de providers dependientes del router (AuthProvider usa useNavigate)
+function RootLayout() {
   return (
-    <Routes>
-      <Route
-        path="/login"
-        element={
+    <AuthProvider>
+      <Outlet />
+      <Toaster />
+    </AuthProvider>
+  )
+}
+
+// Data router (createBrowserRouter): necesario para useBlocker — el aviso de
+// cambios sin guardar (§11) al salir de una página no existe en <BrowserRouter>
+export const router = createBrowserRouter([
+  {
+    element: <RootLayout />,
+    children: [
+      {
+        path: '/login',
+        element: (
           <Suspense fallback={<PageSkeleton />}>
             <LoginPage />
           </Suspense>
-        }
-      />
-
-      <Route
-        element={
+        ),
+      },
+      {
+        element: (
           <RequireAuth>
             <AppShell />
           </RequireAuth>
-        }
-      >
-        <Route path="/" element={<HomeRedirect />} />
-        <Route
-          path="/files"
-          element={
-            <RequireModule module="Files">
-              <FilesPage />
-            </RequireModule>
-          }
-        />
-        <Route
-          path="/monitor"
-          element={
-            <RequireModule module="SystemMonitor">
-              <MonitorPage />
-            </RequireModule>
-          }
-        />
-        <Route
-          path="/admin/users"
-          element={
-            <RequireModule module="UserManagement">
-              <UsersPage />
-            </RequireModule>
-          }
-        />
-        <Route
-          path="/admin/logs"
-          element={
-            <RequireModule module="SystemLogs">
-              <SystemLogsPage />
-            </RequireModule>
-          }
-        />
-        <Route
-          path="/admin/audit-logs"
-          element={
-            <RequireModule module="AuditLogs">
-              <AuditLogsPage />
-            </RequireModule>
-          }
-        />
-      </Route>
-
-      <Route path="*" element={<NotFoundPage />} />
-    </Routes>
-  )
-}
+        ),
+        children: [
+          { path: '/', element: <HomeRedirect /> },
+          {
+            path: '/files',
+            element: (
+              <RequireModule module="Files">
+                <FilesPage />
+              </RequireModule>
+            ),
+          },
+          {
+            path: '/monitor',
+            element: (
+              <RequireModule module="SystemMonitor">
+                <MonitorPage />
+              </RequireModule>
+            ),
+          },
+          {
+            path: '/admin/users',
+            element: (
+              <RequireModule module="UserManagement">
+                <UsersPage />
+              </RequireModule>
+            ),
+          },
+          {
+            path: '/admin/logs',
+            element: (
+              <RequireModule module="SystemLogs">
+                <SystemLogsPage />
+              </RequireModule>
+            ),
+          },
+          {
+            path: '/admin/audit-logs',
+            element: (
+              <RequireModule module="AuditLogs">
+                <AuditLogsPage />
+              </RequireModule>
+            ),
+          },
+          // Cuenta propia: solo requiere sesión, sin guard de módulo
+          { path: '/account/settings', element: <AccountSettingsPage /> },
+          { path: '/account/permissions', element: <MyPermissionsPage /> },
+        ],
+      },
+      { path: '*', element: <NotFoundPage /> },
+    ],
+  },
+])

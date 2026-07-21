@@ -23,7 +23,13 @@ type AuthContextValue = {
   /** true mientras se comprueba la sesión al arrancar (refresh con la cookie). */
   isLoading: boolean
   login: (username: string, password: string) => Promise<void>
-  logout: () => Promise<void>
+  /** `message` se muestra en /login (ej. logout forzado tras cambiar contraseña, §5.2). */
+  logout: (message?: string) => Promise<void>
+  /**
+   * Actualiza el username en memoria tras PATCH /users/me — la cabecera lo
+   * refleja al instante sin esperar al siguiente refresh de token.
+   */
+  updateUsername: (username: string) => void
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -93,16 +99,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [applyToken],
   )
 
-  const logout = useCallback(async () => {
-    try {
-      // §5.2: responde 200 aunque el token ya no exista — el resultado da igual
-      await api.post('/auth/logout', { refreshToken: '' })
-    } catch {
-      /* ignorado a propósito */
-    }
-    clearSession()
-    navigate('/login')
-  }, [clearSession, navigate])
+  const logout = useCallback(
+    async (message?: string) => {
+      try {
+        // §5.2: responde 200 aunque el token ya no exista — el resultado da igual
+        await api.post('/auth/logout', { refreshToken: '' })
+      } catch {
+        /* ignorado a propósito */
+      }
+      clearSession()
+      navigate('/login', message ? { state: { message } } : undefined)
+    },
+    [clearSession, navigate],
+  )
+
+  const updateUsername = useCallback((username: string) => {
+    setClaims((current) => (current ? { ...current, username } : current))
+  }, [])
 
   const value = useMemo<AuthContextValue>(
     () => ({
@@ -111,8 +124,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isLoading,
       login,
       logout,
+      updateUsername,
     }),
-    [claims, isLoading, login, logout],
+    [claims, isLoading, login, logout, updateUsername],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
