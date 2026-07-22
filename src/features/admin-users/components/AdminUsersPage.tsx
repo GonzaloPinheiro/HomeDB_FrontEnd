@@ -3,13 +3,14 @@ import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
 import { RequireAdmin } from '@/app/guards'
+import { UserDetailModal } from '@/features/admin-permissions/components/UserDetailModal'
 import { toApiError } from '@/shared/api/client'
 import { EmptyState } from '@/shared/components/EmptyState'
 import { FilterBar } from '@/shared/components/FilterBar'
 import { Pagination } from '@/shared/components/Pagination'
+import { RoleBadge } from '@/shared/components/RoleBadge'
 import { DataTable, type Column, type SortState } from '@/shared/components/Table'
 import { Avatar, AvatarFallback } from '@/shared/components/ui/avatar'
-import { Badge } from '@/shared/components/ui/badge'
 import { Button } from '@/shared/components/ui/button'
 import {
   DropdownMenu,
@@ -35,15 +36,7 @@ import type { UserSummary } from '../types'
 import { CreateUserModal } from './CreateUserModal'
 import { DeleteUserModal } from './DeleteUserModal'
 
-type ModalState = { type: 'create' } | { type: 'delete'; user: UserSummary } | null
-
-function RoleBadge({ role }: { role: string }) {
-  return role === 'Admin' ? (
-    <Badge className="bg-accent-tint-bg text-accent-tint-text shadow-none">Admin</Badge>
-  ) : (
-    <Badge variant="secondary">{role}</Badge>
-  )
-}
+type ModalState = { type: 'create' } | { type: 'delete'; user: UserSummary } | { type: 'detail'; user: UserSummary } | null
 
 export function AdminUsersPage() {
   // CLAUDE.md §7.10: filtros y página viven en los query params de la URL —
@@ -178,8 +171,9 @@ export function AdminUsersPage() {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            {/* PENDIENTE: Fase 4b — modal de detalle (Perfil/Permisos/Límites, §6.8) */}
-            <DropdownMenuItem disabled>Ver detalle</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => setModal({ type: 'detail', user })}>
+              Ver detalle
+            </DropdownMenuItem>
             {/* Eliminar exige rol Admin + módulo (§5.3, verificado en UsersController) */}
             <RequireAdmin fallback={null}>
               <DropdownMenuItem
@@ -318,6 +312,9 @@ export function AdminUsersPage() {
       <CreateUserModal open={modal?.type === 'create'} onClose={() => setModal(null)} />
       {modal?.type === 'delete' && (
         <DeleteUserModal open onClose={() => setModal(null)} user={modal.user} />
+      )}
+      {modal?.type === 'detail' && (
+        <UserDetailModal key={modal.user.id} open onClose={() => setModal(null)} user={modal.user} />
       )}
     </div>
   )

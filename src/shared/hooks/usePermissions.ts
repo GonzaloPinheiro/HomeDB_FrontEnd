@@ -5,8 +5,11 @@ import { api, unwrap } from '@/shared/api/client'
 import { useAuth } from '@/shared/hooks/useAuth'
 import type { ApiObjResponse, AppModule } from '@/shared/types/api'
 
-// Forma real de UserModulePermissionsResponseDto (9 flags), en camelCase
-const permissionsSchema = z.object({
+// Forma real de UserModulePermissionsResponseDto (9 flags), en camelCase.
+// Exportado: lo reutiliza features/admin-permissions (Fase 4b) para no
+// duplicar la forma del mismo DTO cuando un Admin edita los permisos de OTRO
+// usuario en vez de los propios.
+export const permissionsSchema = z.object({
   filesEnabled: z.boolean(),
   expensesEnabled: z.boolean(),
   investmentsEnabled: z.boolean(),
@@ -20,7 +23,10 @@ const permissionsSchema = z.object({
 
 export type ModulePermissions = z.infer<typeof permissionsSchema>
 
-const MODULE_FLAG: Record<AppModule, keyof ModulePermissions> = {
+// Exportado por el mismo motivo que permissionsSchema: admin-permissions
+// (Fase 4b) necesita iterar ALL_MODULES -> nombre de flag real para pintar y
+// editar el grid de switches de OTRO usuario.
+export const MODULE_FLAG: Record<AppModule, keyof ModulePermissions> = {
   Files: 'filesEnabled',
   Expenses: 'expensesEnabled',
   Investments: 'investmentsEnabled',
