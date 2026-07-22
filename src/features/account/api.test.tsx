@@ -8,7 +8,7 @@ import { api } from '@/shared/api/client'
 import { AuthProvider, useAuth } from '@/shared/hooks/useAuth'
 import type { ApiObjResponse } from '@/shared/types/api'
 
-import { useChangePassword, useUpdateProfile } from './api'
+import { useChangePassword, useMyProfile, useUpdateProfile } from './api'
 
 vi.mock('sonner', () => ({
   toast: Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn() }),
@@ -81,6 +81,36 @@ describe('features/account/api', () => {
 
     await waitFor(() => expect(result.current.auth.claims?.username).toBe('ana-nueva'))
     expect(api.patch).toHaveBeenCalledWith('/users/me', { username: 'ana-nueva' })
+  })
+
+  // Fase de integración: GET /users/me existe (UsersController.GetOwnUserAsync).
+  it('useMyProfile consulta GET /users/me; useUpdateProfile parchea su caché sin refetch tras guardar', async () => {
+    mockSessionRestore()
+    const getSpy = vi.spyOn(api, 'get').mockResolvedValue({
+      data: envelope({
+        id: 7,
+        username: 'ana',
+        email: 'ana@example.com',
+        createdAt: '2026-01-01T00:00:00Z',
+        roles: ['User'],
+      }),
+    })
+    vi.spyOn(api, 'patch').mockResolvedValue({
+      data: envelope({ userId: 7, username: 'ana-nueva', email: 'ana-nueva@example.com' }),
+    })
+
+    const { result } = renderHook(() => ({ profile: useMyProfile(), update: useUpdateProfile() }), { wrapper })
+    await waitFor(() => expect(result.current.profile.data?.username).toBe('ana'))
+    expect(getSpy).toHaveBeenCalledWith('/users/me')
+
+    await result.current.update.mutateAsync({ username: 'ana-nueva', email: 'ana-nueva@example.com' })
+
+    await waitFor(() => expect(result.current.profile.data?.username).toBe('ana-nueva'))
+    expect(result.current.profile.data?.email).toBe('ana-nueva@example.com')
+    // id/createdAt/roles se conservan del fetch original: UpdateProfileResponseDto no los trae
+    expect(result.current.profile.data?.id).toBe(7)
+    expect(result.current.profile.data?.roles).toEqual(['User'])
+    expect(getSpy).toHaveBeenCalledTimes(1) // caché parcheada, sin refetch
   })
 
   it('useChangePassword fuerza logout y navega a /login con el mensaje explicativo', async () => {

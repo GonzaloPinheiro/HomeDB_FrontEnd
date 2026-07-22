@@ -1,10 +1,10 @@
 import { Loader2 } from 'lucide-react'
 import { useRef, useState } from 'react'
 
-import type { UserSummary } from '@/features/admin-users/types'
 import { Modal } from '@/shared/components/Modal'
 import { Button } from '@/shared/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/shared/components/ui/tabs'
+import type { UserSummary } from '@/shared/types/user'
 
 import { LimitsTab } from './LimitsTab'
 import { PermissionsTab } from './PermissionsTab'

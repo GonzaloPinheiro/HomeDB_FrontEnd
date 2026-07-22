@@ -18,11 +18,10 @@ import {
 } from './types'
 
 // CLAUDE.md §7.5: interruptor único de PATCH /files/{id} (mover Y renombrar
-// archivos — mismo endpoint pendiente, un solo flag). Verificado en julio 2026:
-// FilesController aún no tiene ningún PATCH. Cambiar a true cuando el endpoint
-// esté confirmado contra el código real del backend (§2). La anotación :boolean
-// es deliberada — evita que TS estreche el literal y marque código inalcanzable.
-export const FILE_MOVE_ENABLED: boolean = false
+// archivos — mismo endpoint, un solo flag). Verificado en la fase de
+// integración: FilesController.UpdateFileAsync existe y está confirmado
+// contra el código real (§2) — activado.
+export const FILE_MOVE_ENABLED: boolean = true
 
 // Claves de query de la feature. CLAUDE.md §7.8: uso y límite de almacenamiento
 // son queries INDEPENDIENTES con claves distintas — las mutations invalidan solo
@@ -33,22 +32,26 @@ export const filesKeys = {
   storageLimit: ['storage', 'limit'] as const,
 }
 
-function folderIdParams(folderId: number | null) {
-  return folderId === null ? {} : { folderId }
+// GET /folders ya no admite ?folderId= como query param — la fase de
+// integración lo dividió en dos rutas: GET /folders/subfolders (raíz) y
+// GET /folders/{folderId}/subfolders (hijos de esa carpeta). Verificado en
+// FoldersController/FoldersService (GetSubFoldersAsync, antes GetFoldersAsync).
+function subfoldersUrl(folderId: number | null): string {
+  return folderId === null ? '/folders/subfolders' : `/folders/${folderId}/subfolders`
 }
 
 /**
- * CLAUDE.md §6.3: lista única — GET /files y GET /folders se lanzan EN PARALELO
- * y se combinan. Sin parámetros de orden ni paginación en el backend
- * (verificado julio 2026): el orden se aplica en cliente (sort.ts).
+ * CLAUDE.md §6.3: lista única — GET /files y GET /folders/.../subfolders se
+ * lanzan EN PARALELO y se combinan. Sin parámetros de orden ni paginación en
+ * el backend (verificado julio 2026): el orden se aplica en cliente (sort.ts).
  */
 export function useFolderContents(folderId: number | null) {
   return useQuery({
     queryKey: filesKeys.contents(folderId),
     queryFn: async (): Promise<ExplorerItem[]> => {
       const [filesResponse, foldersResponse] = await Promise.all([
-        api.get<ApiObjResponse<unknown>>('/files', { params: folderIdParams(folderId) }),
-        api.get<ApiObjResponse<unknown>>('/folders', { params: folderIdParams(folderId) }),
+        api.get<ApiObjResponse<unknown>>('/files', { params: folderId === null ? {} : { folderId } }),
+        api.get<ApiObjResponse<unknown>>(subfoldersUrl(folderId)),
       ])
       const files = fileItemSchema.array().parse(unwrap(filesResponse.data))
       const folders = folderSchema.array().parse(unwrap(foldersResponse.data))
@@ -167,9 +170,30 @@ export function useUploadFile() {
 /**
  * CLAUDE.md §6.3/§7.5: mover un archivo a otra carpeta (drag & drop y "Mover
  * a…"). Con FILE_MOVE_ENABLED en false no llama a la API ni muta nada — solo
- * el toast informativo. Con true: PATCH /files/{id} { folderId } (null = raíz)
- * e invalida el contenido de origen y destino. NO invalida useStorageUsage:
- * mover no cambia el total ocupado, solo su ubicación.
+ * el toast informativo. Con true: PATCH /files/{id} { newFolderId } (null =
+ * raíz) e invalida el contenido de origen y destino. NO invalida
+ * useStorageUsage: mover no cambia el total ocupado, solo su ubicación.
+ *
+ * Verificado contra FilesService.UpdateFileAsync (fase de integración): el
+ * body real usa `newFolderId`/`newFileName`, NO `folderId`/`fileName` como
+ * asumía CLAUDE.md §5.4 antes de esta fase. `NewFileName` se ignora si viene
+ * vacío, pero `fileItem.FolderId = dto.NewFolderId` se asigna SIEMPRE sin
+ * comprobar si vino en el body (no hay `.HasValue` por campo) — mover en
+ * solitario es seguro (no toca el nombre), pero renombrar en solitario NO
+ * puede omitir `newFolderId` o el archivo saltaría a la raíz (ver useRenameFile).
+ *
+ * ⚠️ BUG DE BACKEND CONFIRMADO (fase de integración, pendiente de arreglo del
+ * usuario en HomeDB/): `UpdateFileAsync` llama a
+ * `_fileItemRepository.GetByIdAsync(fileId, cToken)` SIN el tercer argumento
+ * (`asNoTracking`), que por defecto es `true` — la entidad devuelta no queda
+ * trackeada por EF Core, así que mutar `FileName`/`FolderId` sobre ella y
+ * llamar a `SaveChangesAsync()` NO persiste nada, aunque la API responda 200
+ * con un DTO que aparenta el cambio (construido a partir del objeto mutado en
+ * memoria, nunca guardado). Verificado en vivo: renombrar/mover un archivo da
+ * toast de éxito, pero el nombre/carpeta reales no cambian en BD. El front no
+ * puede compensar esto (la respuesta 200 no distingue "persistido" de
+ * "mutado en memoria") — hay que arreglarlo en el backend añadiendo
+ * `asNoTracking: false` a esa llamada.
  */
 export function useMoveFile(sourceFolderId: number | null) {
   const queryClient = useQueryClient()
@@ -183,7 +207,7 @@ export function useMoveFile(sourceFolderId: number | null) {
     }) => {
       if (!FILE_MOVE_ENABLED) return null
       const response = await api.patch<ApiObjResponse<unknown>>(`/files/${fileId}`, {
-        folderId: targetFolderId,
+        newFolderId: targetFolderId,
       })
       return fileItemSchema.parse(unwrap(response.data))
     },
@@ -201,8 +225,12 @@ export function useMoveFile(sourceFolderId: number | null) {
 }
 
 /**
- * CLAUDE.md §5.4/§7.5: renombrar un archivo — mismo endpoint pendiente que
- * mover (PATCH /files/{id} { fileName }), mismo interruptor FILE_MOVE_ENABLED.
+ * CLAUDE.md §5.4/§7.5: renombrar un archivo — mismo endpoint que mover, mismo
+ * interruptor FILE_MOVE_ENABLED. `folderId` es la carpeta donde vive HOY el
+ * archivo (la que ya se le pasa a este hook para invalidar caché) — se reenvía
+ * siempre como `newFolderId` aunque no cambie, porque el backend no lo trata
+ * como opcional (ver nota en useMoveFile): omitirlo movería el archivo a la
+ * raíz como efecto secundario de renombrarlo.
  */
 export function useRenameFile(folderId: number | null) {
   const queryClient = useQueryClient()
@@ -210,7 +238,8 @@ export function useRenameFile(folderId: number | null) {
     mutationFn: async ({ fileId, newName }: { fileId: number; newName: string }) => {
       if (!FILE_MOVE_ENABLED) return null
       const response = await api.patch<ApiObjResponse<unknown>>(`/files/${fileId}`, {
-        fileName: newName,
+        newFileName: newName,
+        newFolderId: folderId,
       })
       return fileItemSchema.parse(unwrap(response.data))
     },

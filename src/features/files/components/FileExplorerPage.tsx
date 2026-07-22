@@ -21,9 +21,10 @@ import { useDebounce } from '@/shared/hooks/useDebounce'
 
 import { downloadFile, useFolderContents, useMoveFile } from '../api'
 import { sortExplorerItems, type SortDirection, type SortKey } from '../sort'
-import type { ExplorerItem } from '../types'
+import type { Crumb, ExplorerItem } from '../types'
 import { useDwell } from '../useDwell'
-import { Breadcrumb, type Crumb } from './Breadcrumb'
+import { useFolderPath } from '../useFolderPath'
+import { Breadcrumb } from './Breadcrumb'
 import { CreateFolderModal } from './CreateFolderModal'
 import { DeleteConfirmModal } from './DeleteConfirmModal'
 import { FileListSkeleton } from './FileListSkeleton'
@@ -60,17 +61,34 @@ export function FileExplorerPage() {
   // CLAUDE.md §11: buscador con debounce para no refiltrar en cada tecla
   const debouncedSearch = useDebounce(search)
 
+  // ¿La carpeta actual ya es conocida por la navegación normal dentro de la
+  // app (trail acumulado al entrar en carpetas / ir hacia atrás)? Si no, es un
+  // deep link o un refresco (F5) directo a esa URL.
+  const trailIndex = trail.findIndex((crumb) => crumb.id === folderId)
+  const isCurrentTrailTail = trail[trail.length - 1].id === folderId
+  const isKnownFromTrail = folderId === null || isCurrentTrailTail || trailIndex >= 0
+
+  // CLAUDE.md §5.5: en un deep link/F5 a una carpeta profunda sin trail previo,
+  // se resuelve la ruta real subiendo por ParentFolderId (useFolderPath) en vez
+  // de mostrar el marcador genérico de la Fase 2a. Solo se dispara cuando de
+  // verdad hace falta (folder no conocido por la navegación normal), para no
+  // añadir peticiones de más sobre lo que ya está en caché de una navegación
+  // normal (§6.3).
+  const folderPath = useFolderPath(folderId, !isKnownFromTrail)
+
   // Trail reconciliado con la URL, derivado en render (atrás/adelante del
-  // navegador, deep links). Sin endpoint para pedir una carpeta suelta por id
-  // (§5.5), un deep link a una carpeta no visitada muestra un marcador genérico
-  // en vez de fallar.
+  // navegador, deep links). Mientras useFolderPath resuelve o si fallara, el
+  // marcador genérico actúa de red de seguridad — nunca debe romper la pantalla.
+  // No hace falta escribir el resultado de vuelta en `trail`: en cuanto el
+  // usuario navega desde aquí (enterFolder/goToCrumb toman `displayTrail`, no
+  // `trail`, como base), los nombres reales ya resueltos pasan a formar parte
+  // del trail de navegación normal sin ninguna petición adicional.
   const displayTrail = useMemo(() => {
-    const last = trail[trail.length - 1]
-    if (last.id === folderId) return trail
-    const knownIndex = trail.findIndex((crumb) => crumb.id === folderId)
-    if (knownIndex >= 0) return trail.slice(0, knownIndex + 1)
-    return folderId === null ? [ROOT] : [ROOT, { id: folderId, name: 'Carpeta' }]
-  }, [trail, folderId])
+    if (folderId === null) return [ROOT]
+    if (isCurrentTrailTail) return trail
+    if (trailIndex >= 0) return trail.slice(0, trailIndex + 1)
+    return folderPath.data ?? [ROOT, { id: folderId, name: 'Carpeta' }]
+  }, [trail, folderId, isCurrentTrailTail, trailIndex, folderPath.data])
 
   // CLAUDE.md §11: evitar que soltar un archivo fuera de la zona de subida haga
   // que el navegador lo abra y saque al usuario de la app. No interfiere con

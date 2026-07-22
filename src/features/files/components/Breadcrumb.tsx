@@ -4,10 +4,7 @@ import { Fragment } from 'react'
 
 import { cn } from '@/shared/lib/utils'
 
-export type Crumb = {
-  id: number | null
-  name: string
-}
+import type { Crumb } from '../types'
 
 type BreadcrumbProps = {
   crumbs: Crumb[]

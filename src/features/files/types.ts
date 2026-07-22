@@ -67,6 +67,12 @@ export const settingsOverviewSchema = z.object({
 })
 export type SettingsOverview = z.infer<typeof settingsOverviewSchema>
 
+/** Un segmento del breadcrumb — usado por Breadcrumb.tsx, FileExplorerPage y useFolderPath. */
+export type Crumb = {
+  id: number | null
+  name: string
+}
+
 /**
  * CLAUDE.md §6.3: lista única de carpetas y archivos. Modelo unificado para la
  * fila del explorador; `createdAt` normaliza uploadedAt/createdAt para ordenar.

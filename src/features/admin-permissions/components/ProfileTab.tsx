@@ -1,7 +1,6 @@
 import { RoleBadge } from '@/shared/components/RoleBadge'
 import { formatShortDate } from '@/shared/lib/formatDate'
-
-import type { UserSummary } from '@/features/admin-users/types'
+import type { UserSummary } from '@/shared/types/user'
 
 type ProfileTabProps = {
   user: UserSummary

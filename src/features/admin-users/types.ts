@@ -1,17 +1,13 @@
 import { z } from 'zod'
 
+import { userSummarySchema } from '@/shared/types/user'
+
 // Formas reales verificadas contra UsersDtos.cs y AuthDtos.cs (julio 2026),
 // camelCase en el wire (CLAUDE.md §5.1)
 
-export const userSummarySchema = z.object({
-  id: z.number(),
-  username: z.string(),
-  email: z.string(),
-  createdAt: z.string(),
-  // El backend expone una LISTA de roles por usuario (aunque hoy solo asigna uno)
-  roles: z.array(z.string()),
-})
-export type UserSummary = z.infer<typeof userSummarySchema>
+// Reexportado desde shared/types/user.ts: lo consumen también account/ (GET
+// /users/me) y admin-permissions/ (Perfil), no solo esta feature.
+export { userSummarySchema, type UserSummary } from '@/shared/types/user'
 
 export const usersPageSchema = z.object({
   users: z.array(userSummarySchema),

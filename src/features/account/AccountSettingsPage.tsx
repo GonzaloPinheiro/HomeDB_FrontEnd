@@ -28,11 +28,10 @@ import {
   SelectValue,
 } from '@/shared/components/ui/select'
 import { Skeleton } from '@/shared/components/ui/skeleton'
-import { useAuth } from '@/shared/hooks/useAuth'
 import { getThemePreference, setThemePreference, type ThemePreference } from '@/shared/lib/theme'
 import { cn } from '@/shared/lib/utils'
 
-import { useAccountSettings, useChangePassword, useUpdateAccountSettings, useUpdateProfile } from './api'
+import { useAccountSettings, useChangePassword, useMyProfile, useUpdateAccountSettings, useUpdateProfile } from './api'
 import {
   changePasswordSchema,
   profileSchema,
@@ -58,27 +57,33 @@ const THEME_OPTIONS: Array<{ value: ThemePreference; label: string; icon: typeof
 ]
 
 export default function AccountSettingsPage() {
-  const { claims } = useAuth()
-
   // --- Perfil ---
+  // GET /users/me (fase de integración) permite precargar los valores reales
+  // en vez de asumir "vacío = no cambiar" (Fase 3, cuando no existía forma de
+  // leer el propio perfil).
+  const profile = useMyProfile()
   const updateProfile = useUpdateProfile()
   const profileForm = useForm<ProfileValues>({
     resolver: zodResolver(profileSchema),
-    values: { username: claims?.username ?? '', email: '' },
+    values: profile.data ? { username: profile.data.username, email: profile.data.email } : undefined,
+    defaultValues: { username: '', email: '' },
   })
 
   const submitProfile = profileForm.handleSubmit((values) => {
-    // Solo los campos modificados (ver nota en useUpdateProfile): reenviar el
-    // username actual sin cambios fallaría con 1007
+    // Solo los campos REALMENTE modificados, comparados contra el valor
+    // cargado por GET /users/me (no contra el claim del JWT, que podría estar
+    // desactualizado): reenviar sin cambios fallaría con 1007/1011 (ver nota
+    // en useUpdateProfile — el backend no excluye al propio usuario del
+    // chequeo de unicidad).
     const changes: { username?: string; email?: string } = {}
-    if (values.username !== claims?.username) changes.username = values.username
-    if (values.email !== '') changes.email = values.email
+    if (values.username !== profile.data?.username) changes.username = values.username
+    if (values.email !== profile.data?.email) changes.email = values.email
     if (Object.keys(changes).length === 0) return
 
     updateProfile.mutate(changes, {
       onSuccess: () => {
         toast.success('Perfil actualizado')
-        profileForm.reset({ username: profileForm.getValues('username'), email: '' })
+        profileForm.reset(values)
       },
       onError: (error) => {
         // 1007/1011 junto al campo correspondiente, no como toast (patrón del login)
@@ -154,49 +159,58 @@ export default function AccountSettingsPage() {
       <h1 className="text-xl font-semibold text-text-primary">Ajustes</h1>
 
       <SectionCard title="Perfil">
-        <Form {...profileForm}>
-          <form onSubmit={submitProfile} className="flex flex-col gap-4" noValidate>
-            <FormField
-              control={profileForm.control}
-              name="username"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Nombre de usuario</FormLabel>
-                  <FormControl>
-                    <Input autoComplete="username" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={profileForm.control}
-              name="email"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Email</FormLabel>
-                  <FormControl>
-                    <Input type="email" autoComplete="email" placeholder="Escribe un email para cambiarlo" {...field} />
-                  </FormControl>
-                  {/* No hay endpoint para leer el email actual (§5.4) — vacío = sin cambios */}
-                  <FormDescription>Déjalo vacío para no cambiar el email actual.</FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            {profileForm.formState.errors.root ? (
-              <p className="text-sm text-destructive" role="alert">
-                {profileForm.formState.errors.root.message}
-              </p>
-            ) : null}
-            <div className="flex justify-end">
-              <Button type="submit" disabled={updateProfile.isPending || !profileForm.formState.isDirty}>
-                {updateProfile.isPending ? <Loader2 className="animate-spin" /> : null}
-                Guardar perfil
-              </Button>
-            </div>
-          </form>
-        </Form>
+        {profile.isPending ? (
+          <div className="flex flex-col gap-3">
+            <Skeleton className="h-9 w-full" />
+            <Skeleton className="h-9 w-full" />
+          </div>
+        ) : profile.isError ? (
+          <p className="text-sm text-text-secondary">
+            No se pudo cargar tu perfil: {toApiError(profile.error).message}
+          </p>
+        ) : (
+          <Form {...profileForm}>
+            <form onSubmit={submitProfile} className="flex flex-col gap-4" noValidate>
+              <FormField
+                control={profileForm.control}
+                name="username"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Nombre de usuario</FormLabel>
+                    <FormControl>
+                      <Input autoComplete="username" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={profileForm.control}
+                name="email"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Email</FormLabel>
+                    <FormControl>
+                      <Input type="email" autoComplete="email" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              {profileForm.formState.errors.root ? (
+                <p className="text-sm text-destructive" role="alert">
+                  {profileForm.formState.errors.root.message}
+                </p>
+              ) : null}
+              <div className="flex justify-end">
+                <Button type="submit" disabled={updateProfile.isPending || !profileForm.formState.isDirty}>
+                  {updateProfile.isPending ? <Loader2 className="animate-spin" /> : null}
+                  Guardar perfil
+                </Button>
+              </div>
+            </form>
+          </Form>
+        )}
       </SectionCard>
 
       <SectionCard title="Contraseña">
