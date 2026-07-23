@@ -30,6 +30,9 @@
   --warning-text: #8b6115;
   --critical-bg: #f5dcd7;
   --critical-text: #96322a;
+  /* Fase 6: punto de estado "ventilador en marcha" en Monitor (§6.13) */
+  --positive-bg: #dcebd7;
+  --positive-text: #3f6b34;
 }
 
 .dark {

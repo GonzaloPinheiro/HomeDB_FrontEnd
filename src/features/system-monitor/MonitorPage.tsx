@@ -1,6 +1,6 @@
-import { PlaceholderPage } from '@/shared/components/PlaceholderPage'
+import { SystemMonitorDashboard } from './components/SystemMonitorDashboard'
 
-// PENDIENTE: dashboard real de métricas (CLAUDE.md §6.13) en una fase posterior
+// Entrada lazy de la ruta /monitor (CLAUDE.md §3)
 export default function MonitorPage() {
-  return <PlaceholderPage title="Monitor" description="Contenido real en una fase posterior." />
+  return <SystemMonitorDashboard />
 }

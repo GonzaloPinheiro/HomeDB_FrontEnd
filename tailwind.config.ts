@@ -43,6 +43,10 @@ export default {
           bg: 'var(--critical-bg)',
           text: 'var(--critical-text)',
         },
+        positive: {
+          bg: 'var(--positive-bg)',
+          text: 'var(--positive-text)',
+        },
         // Alias semánticos que esperan los componentes de shadcn/ui — mapean a las
         // mismas CSS variables de §6.1, nunca a valores nuevos.
         background: 'var(--bg)',
