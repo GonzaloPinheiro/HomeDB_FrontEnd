@@ -1,6 +1,6 @@
-import { PlaceholderPage } from '@/shared/components/PlaceholderPage'
+import { AdminSystemLogsPage } from './components/AdminSystemLogsPage'
 
-// PENDIENTE: tabla real de logs de sistema (CLAUDE.md §6.6) en una fase posterior
+// Entrada lazy de la ruta /admin/logs (CLAUDE.md §3)
 export default function SystemLogsPage() {
-  return <PlaceholderPage title="Registros" description="Contenido real en una fase posterior." />
+  return <AdminSystemLogsPage />
 }

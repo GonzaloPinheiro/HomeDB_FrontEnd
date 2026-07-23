@@ -1,6 +1,6 @@
-import { PlaceholderPage } from '@/shared/components/PlaceholderPage'
+import { AdminAuditLogsPage } from './components/AdminAuditLogsPage'
 
-// PENDIENTE: tabla real de auditoría (CLAUDE.md §6.6) en una fase posterior
+// Entrada lazy de la ruta /admin/audit-logs (CLAUDE.md §3)
 export default function AuditLogsPage() {
-  return <PlaceholderPage title="Auditoría" description="Contenido real en una fase posterior." />
+  return <AdminAuditLogsPage />
 }

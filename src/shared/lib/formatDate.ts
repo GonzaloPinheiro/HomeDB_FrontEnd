@@ -19,3 +19,23 @@ export function formatShortDate(iso: string, now: Date = new Date()): string {
   // Algunas versiones de ICU abrevian el mes con punto ("jul.") — se normaliza sin él
   return formatter.format(date).replace(/\./g, '')
 }
+
+const FULL_DATE_TIME = new Intl.DateTimeFormat('es-ES', {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+})
+
+/**
+ * ISO -> fecha y hora completas en español: "12 jul 2026, 14:35:02". Usado en
+ * el despliegue inline de fila de Logs/Auditoría (§6.8), donde se muestra el
+ * timestamp completo sin resumir.
+ */
+export function formatDateTime(iso: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return '—'
+  return FULL_DATE_TIME.format(date).replace(/\./g, '')
+}
