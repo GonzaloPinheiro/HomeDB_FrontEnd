@@ -395,6 +395,14 @@ Cualquier mutation que cambie el espacio ocupado (subir archivo, borrar archivo,
 - **Pequeño** (~380px de ancho): confirmaciones y edición de un solo campo — crear carpeta, renombrar, eliminar, editar descripción de un rol.
 - **Grande** (~560px de ancho, ~460px de alto mínimo): contenido con secciones o pestañas que va a crecer con el tiempo — el modal de detalle de Usuario (§6.8, pestañas Perfil/Permisos/Límites) es el caso de referencia. **No dimensionar al mínimo necesario hoy** — reservar el tamaño grande desde ahora para que quepan las funcionalidades que se añadan más adelante sin tener que rediseñar el modal cada vez. Cualquier modal futuro con varias secciones (no solo Usuarios) usa esta misma variante grande, para que no haya un tamaño distinto por pantalla.
 
+### 6.15 Error boundaries — convención añadida en Fase 7
+
+No estaba escrito en este documento hasta la auditoría de calidad de la Fase 7, pero ya es convención fija del proyecto: **`shared/components/ErrorBoundary.tsx`** (componente de clase — React no tiene equivalente en hooks) envuelve dos niveles:
+- **Uno de app entera**, en `app/App.tsx` alrededor de `<RouterProvider>` — última red de seguridad si algo revienta fuera de cualquier sección (ej. el propio `AuthProvider`).
+- **Uno por página de nivel superior**, en `app/router.tsx`, envolviendo el componente de cada ruta con un `sectionLabel` descriptivo (`"el explorador de archivos"`, `"el Monitor del sistema"`, `"Usuarios"`, `"Registros"`, `"Auditoría"`, `"Ajustes de cuenta"`, `"Mis permisos"`) — así un fallo de render en una pantalla no tira las demás; `AppShell` (cabecera + sidebar) sigue intacto y navegable alrededor del fallback, el usuario no queda atrapado.
+
+El botón "Reintentar" del fallback fuerza un remontaje real del subárbol (vía una `key` que se incrementa), no solo oculta el mensaje de error — si el problema era de estado local roto, un remontaje limpio tiene más opciones de arreglarlo que simplemente volver a renderizar el mismo estado. Sin servicio de reporting de errores todavía (§2: no hay CI/monitoring montado) — de momento el error se registra solo con `console.error`, sería el siguiente paso natural si el proyecto añade telemetría más adelante.
+
 ## 7. Patrones de código
 
 ### 7.1 Data fetching

@@ -23,7 +23,8 @@ export function Pagination({ page, totalPages, totalCount, onPageChange }: Pagin
         <Button
           variant="outline"
           size="icon"
-          className="h-8 w-8"
+          // CLAUDE.md §10/§11: icono visual compacto, área táctil real ~44px
+          className="relative h-8 w-8 after:absolute after:-inset-1.5 after:content-['']"
           onClick={() => onPageChange(page - 1)}
           disabled={page <= 1}
           aria-label="Página anterior"
@@ -36,7 +37,7 @@ export function Pagination({ page, totalPages, totalCount, onPageChange }: Pagin
         <Button
           variant="outline"
           size="icon"
-          className="h-8 w-8"
+          className="relative h-8 w-8 after:absolute after:-inset-1.5 after:content-['']"
           onClick={() => onPageChange(page + 1)}
           disabled={page >= totalPages}
           aria-label="Página siguiente"

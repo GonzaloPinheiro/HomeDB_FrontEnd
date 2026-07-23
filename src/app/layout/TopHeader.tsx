@@ -28,7 +28,14 @@ export function TopHeader({ onToggleSidebar }: TopHeaderProps) {
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-bg px-3">
       <div className="flex items-center gap-2">
-        <Button variant="ghost" size="icon" onClick={onToggleSidebar} aria-label="Alternar sidebar">
+        <Button
+          variant="ghost"
+          size="icon"
+          // CLAUDE.md §10/§11: área táctil ~44px sin agrandar el icono visual
+          className="relative after:absolute after:-inset-1 after:content-['']"
+          onClick={onToggleSidebar}
+          aria-label="Alternar sidebar"
+        >
           <PanelLeft />
         </Button>
         <div className="flex items-center gap-2">

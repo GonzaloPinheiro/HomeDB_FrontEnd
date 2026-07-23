@@ -109,7 +109,8 @@ export function AdminSystemLogsPage() {
           type="button"
           variant="ghost"
           size="icon"
-          className="h-7 w-7 text-text-faint hover:text-text-primary"
+          // CLAUDE.md §10/§11: icono visual pequeño (tabla densa, §6.6), área táctil ~44px
+          className="relative h-7 w-7 text-text-faint after:absolute after:-inset-2 after:content-[''] hover:text-text-primary"
           aria-label={expandedId === log.id ? 'Contraer detalle' : 'Ver detalle completo'}
           aria-expanded={expandedId === log.id}
           onClick={() => setExpandedId((current) => (current === log.id ? null : log.id))}

@@ -137,7 +137,8 @@ export function FileRow({ item, onEnterFolder, onDownload, onRename, onMove, onD
             <Button
               variant="ghost"
               size="icon"
-              className="h-8 w-8 text-text-faint hover:text-text-primary"
+              // CLAUDE.md §10/§11: icono visual compacto, área táctil real ~44px vía pseudo-elemento
+              className="relative h-8 w-8 text-text-faint after:absolute after:-inset-1.5 after:content-[''] hover:text-text-primary"
               aria-label={`Acciones de ${item.name}`}
             >
               <MoreVertical />

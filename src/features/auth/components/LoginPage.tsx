@@ -1,11 +1,11 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation } from '@tanstack/react-query'
-import { Eye, EyeOff, Loader2 } from 'lucide-react'
-import { useState } from 'react'
+import { Loader2 } from 'lucide-react'
 import { useForm } from 'react-hook-form'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
 
 import { PageSkeleton } from '@/shared/components/PageSkeleton'
+import { PasswordInput } from '@/shared/components/PasswordInput'
 import { Button } from '@/shared/components/ui/button'
 import {
   Form,
@@ -24,7 +24,6 @@ export default function LoginPage() {
   const { isAuthenticated, isLoading, login } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
-  const [showPassword, setShowPassword] = useState(false)
   // Mensaje informativo de un logout forzado (ej. tras cambiar la contraseña, §5.2)
   const infoMessage = (location.state as { message?: string } | null)?.message
 
@@ -79,23 +78,16 @@ export default function LoginPage() {
                 <FormItem>
                   <FormLabel>Contraseña</FormLabel>
                   <FormControl>
-                    {/* CLAUDE.md §11: mostrar/ocultar contraseña en todos los campos de contraseña */}
-                    <div className="relative">
-                      <Input
-                        type={showPassword ? 'text' : 'password'}
-                        autoComplete="current-password"
-                        className="pr-10"
-                        {...field}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword((v) => !v)}
-                        className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-text-muted hover:text-text-primary"
-                        aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
-                      >
-                        {showPassword ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
-                      </button>
-                    </div>
+                    {/*
+                      CLAUDE.md §11: mostrar/ocultar contraseña en todos los campos de
+                      contraseña. Fase 7: antes había un <div> ad-hoc envolviendo el
+                      Input aquí — Radix Slot (FormControl) engancha `id`/aria-* en el
+                      hijo DIRECTO, así que ese div se quedaba con el id y el <label>
+                      (htmlFor) nunca apuntaba al input real (bug de accesibilidad).
+                      PasswordInput reenvía esas props al <input> interno vía spread,
+                      igual que ya hacían CreateUserModal/AccountSettingsPage.
+                    */}
+                    <PasswordInput autoComplete="current-password" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

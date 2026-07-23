@@ -164,7 +164,9 @@ export function AdminUsersPage() {
             <Button
               variant="ghost"
               size="icon"
-              className="h-7 w-7 text-text-faint hover:text-text-primary"
+              // CLAUDE.md §10/§11: tabla densa (§6.6) => icono visual pequeño, pero el área
+              // táctil real se expande a ~44px con un pseudo-elemento que no afecta al layout
+              className="relative h-7 w-7 text-text-faint after:absolute after:-inset-2 after:content-[''] hover:text-text-primary"
               aria-label={`Acciones de ${user.username}`}
             >
               <MoreVertical />

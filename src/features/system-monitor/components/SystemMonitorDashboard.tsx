@@ -126,7 +126,8 @@ export function SystemMonitorDashboard() {
         })}
       </div>
 
-      <div className="flex items-center justify-between">
+      {/* CLAUDE.md §10: flex-wrap por consistencia con el resto de cabeceras de pantalla — margen de seguridad a ~375px/zoom grande */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-sm font-medium text-text-secondary">{METRIC_LABEL[selected]}</h2>
         <RangeChips value={range} onChange={setRange} />
       </div>

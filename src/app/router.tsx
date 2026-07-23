@@ -3,6 +3,7 @@ import { lazy, Suspense } from 'react'
 import { createBrowserRouter, Link, Navigate, Outlet } from 'react-router-dom'
 
 import { EmptyState } from '@/shared/components/EmptyState'
+import { ErrorBoundary } from '@/shared/components/ErrorBoundary'
 import { PageSkeleton } from '@/shared/components/PageSkeleton'
 import { Button } from '@/shared/components/ui/button'
 import { Toaster } from '@/shared/components/ui/sonner'
@@ -103,7 +104,9 @@ export const router = createBrowserRouter([
             path: '/files',
             element: (
               <RequireModule module="Files">
-                <FilesPage />
+                <ErrorBoundary sectionLabel="el explorador de archivos">
+                  <FilesPage />
+                </ErrorBoundary>
               </RequireModule>
             ),
           },
@@ -111,7 +114,9 @@ export const router = createBrowserRouter([
             path: '/monitor',
             element: (
               <RequireModule module="SystemMonitor">
-                <MonitorPage />
+                <ErrorBoundary sectionLabel="el Monitor del sistema">
+                  <MonitorPage />
+                </ErrorBoundary>
               </RequireModule>
             ),
           },
@@ -119,7 +124,9 @@ export const router = createBrowserRouter([
             path: '/admin/users',
             element: (
               <RequireModule module="UserManagement">
-                <UsersPage />
+                <ErrorBoundary sectionLabel="Usuarios">
+                  <UsersPage />
+                </ErrorBoundary>
               </RequireModule>
             ),
           },
@@ -127,7 +134,9 @@ export const router = createBrowserRouter([
             path: '/admin/logs',
             element: (
               <RequireModule module="SystemLogs">
-                <SystemLogsPage />
+                <ErrorBoundary sectionLabel="Registros">
+                  <SystemLogsPage />
+                </ErrorBoundary>
               </RequireModule>
             ),
           },
@@ -135,13 +144,29 @@ export const router = createBrowserRouter([
             path: '/admin/audit-logs',
             element: (
               <RequireModule module="AuditLogs">
-                <AuditLogsPage />
+                <ErrorBoundary sectionLabel="Auditoría">
+                  <AuditLogsPage />
+                </ErrorBoundary>
               </RequireModule>
             ),
           },
           // Cuenta propia: solo requiere sesión, sin guard de módulo
-          { path: '/account/settings', element: <AccountSettingsPage /> },
-          { path: '/account/permissions', element: <MyPermissionsPage /> },
+          {
+            path: '/account/settings',
+            element: (
+              <ErrorBoundary sectionLabel="Ajustes de cuenta">
+                <AccountSettingsPage />
+              </ErrorBoundary>
+            ),
+          },
+          {
+            path: '/account/permissions',
+            element: (
+              <ErrorBoundary sectionLabel="Mis permisos">
+                <MyPermissionsPage />
+              </ErrorBoundary>
+            ),
+          },
         ],
       },
       { path: '*', element: <NotFoundPage /> },
