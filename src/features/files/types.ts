@@ -33,6 +33,25 @@ export const uploadFileResponseSchema = z.object({
   uploadedAt: z.string(),
 })
 
+// CLAUDE.md §5.4/§7.4: subida por chunks — formas reales de UploadDTOs.cs
+// (UploadController, verificado julio 2026).
+export const uploadInitResponseSchema = z.object({
+  sessionId: z.string(),
+})
+
+export const uploadStatusResponseSchema = z.object({
+  sessionId: z.string(),
+  totalChunks: z.number(),
+  receivedChunks: z.number().array(),
+})
+
+// POST /files/upload/{sessionId}/complete devuelve el UploadFileResponseDto
+// normal, EXCEPTO si la sesión ya estaba completada (llamada duplicada), caso
+// en que el backend responde con un simple string informativo en `data` en
+// vez del DTO (UploadController.CompleteUploadAsync) — hay que contemplar
+// ambas formas.
+export const uploadCompleteResponseSchema = z.union([uploadFileResponseSchema, z.string()])
+
 export const deleteFileResponseSchema = z.object({
   fileId: z.number(),
   fileName: z.string(),

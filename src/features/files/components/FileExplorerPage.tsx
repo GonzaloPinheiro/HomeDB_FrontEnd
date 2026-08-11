@@ -22,6 +22,7 @@ import { useDebounce } from '@/shared/hooks/useDebounce'
 import { downloadFile, useFolderContents, useMoveFile } from '../api'
 import { sortExplorerItems, type SortDirection, type SortKey } from '../sort'
 import type { Crumb, ExplorerItem } from '../types'
+import { useUploadQueue } from '../uploadQueue/UploadQueueContext'
 import { useDwell } from '../useDwell'
 import { useFolderPath } from '../useFolderPath'
 import { Breadcrumb } from './Breadcrumb'
@@ -32,13 +33,14 @@ import { FileRow, ItemIcon } from './FileRow'
 import { MoveFileModal } from './MoveFileModal'
 import { RenameModal } from './RenameModal'
 import { SortableHeader } from './SortableHeader'
-import { UploadModal } from './UploadModal'
 
 const ROOT: Crumb = { id: null, name: 'Inicio' }
 
+// CLAUDE.md §6.5/§7.4: 'upload' ya no es un modal local — abre el panel
+// global (UploadQueueProvider, montado en AppShell) pasándole la carpeta
+// activa como destino.
 type ModalState =
   | { type: 'create' }
-  | { type: 'upload' }
   | { type: 'rename'; item: ExplorerItem }
   | { type: 'move'; item: ExplorerItem }
   | { type: 'delete'; item: ExplorerItem }
@@ -105,6 +107,7 @@ export function FileExplorerPage() {
 
   const contents = useFolderContents(folderId)
   const moveFile = useMoveFile(folderId)
+  const uploadQueue = useUploadQueue()
 
   // Drag & drop (§6.3/§7.5): sensores de puntero, nunca HTML5 DnD (§10)
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
@@ -216,7 +219,7 @@ export function FileExplorerPage() {
             <FolderPlus />
             <span className="hidden sm:inline">Nueva carpeta</span>
           </Button>
-          <Button onClick={() => setModal({ type: 'upload' })}>
+          <Button onClick={() => uploadQueue.openPanel({ folderId, folderName: currentFolderName })}>
             <Upload />
             <span className="hidden sm:inline">Subir</span>
           </Button>
@@ -284,7 +287,7 @@ export function FileExplorerPage() {
           title="Carpeta vacía"
           description="Sube un archivo o crea una carpeta para empezar."
           action={
-            <Button onClick={() => setModal({ type: 'upload' })}>
+            <Button onClick={() => uploadQueue.openPanel({ folderId, folderName: currentFolderName })}>
               <Upload />
               Subir archivo
             </Button>
@@ -311,12 +314,6 @@ export function FileExplorerPage() {
         open={modal?.type === 'create'}
         onClose={() => setModal(null)}
         parentFolderId={folderId}
-      />
-      <UploadModal
-        open={modal?.type === 'upload'}
-        onClose={() => setModal(null)}
-        folderId={folderId}
-        folderName={currentFolderName}
       />
       {modal?.type === 'rename' && (
         <RenameModal open onClose={() => setModal(null)} parentFolderId={folderId} item={modal.item} />

@@ -13,7 +13,6 @@ import {
   storageStatsSchema,
   toExplorerFile,
   toExplorerFolder,
-  uploadFileResponseSchema,
   type ExplorerItem,
 } from './types'
 
@@ -131,41 +130,13 @@ export function useDeleteFile(folderId: number | null) {
   })
 }
 
-export type UploadVariables = {
-  file: File
-  folderId: number | null
-  /** Progreso real 0-100 (onUploadProgress de axios). */
-  onProgress: (percent: number) => void
-}
-
-/**
- * CLAUDE.md §6.5/§7.4: única vía de subida de todo el proyecto. Hoy es un POST
- * multipart único; cuando el backend pase a subida por paquetes solo cambia
- * esta implementación, ningún componente que la consume. Varias subidas en
- * paralelo = varias llamadas a mutateAsync, cada una con su propio onProgress.
- */
-export function useUploadFile() {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: async ({ file, folderId, onProgress }: UploadVariables) => {
-      const formData = new FormData()
-      formData.append('file', file)
-      if (folderId !== null) formData.append('folderId', String(folderId))
-
-      const response = await api.post<ApiObjResponse<unknown>>('/files', formData, {
-        onUploadProgress: (event) => {
-          if (event.total) onProgress(Math.round((event.loaded / event.total) * 100))
-        },
-      })
-      return uploadFileResponseSchema.parse(unwrap(response.data))
-    },
-    onSuccess: (uploaded) => {
-      void queryClient.invalidateQueries({ queryKey: filesKeys.contents(uploaded.folderId) })
-      void queryClient.invalidateQueries({ queryKey: filesKeys.storageUsage })
-    },
-    // Sin toast aquí: el error se muestra en la fila del archivo (UploadModal)
-  })
-}
+// CLAUDE.md §6.5/§7.4: la subida de archivos ya no vive aquí como una
+// mutation suelta — es un pipeline por chunks que debe seguir corriendo
+// aunque el componente que lo inició se desmonte (cerrar el modal, cambiar
+// de página), así que vive en un Context montado en AppShell:
+// `features/files/uploadQueue/UploadQueueContext.tsx` (`useUploadQueue`).
+// `filesKeys` se sigue exportando desde aquí porque esa misma pieza lo usa
+// para invalidar caché al completar una subida.
 
 /**
  * CLAUDE.md §6.3/§7.5: mover un archivo a otra carpeta (drag & drop y "Mover

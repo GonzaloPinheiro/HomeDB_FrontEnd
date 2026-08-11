@@ -31,7 +31,7 @@ Frontend web de **HomeDB**, una API personal (ASP.NET Core 8 + PostgreSQL) que g
 
 - **React 19 + TypeScript + Vite**
 - **React Router** (rutas anidadas, lazy loading de páginas con `React.lazy`)
-- **TanStack Query** para todo el estado de servidor (fetch, caché, loading, error, reintentos). El único estado global "manual" es la sesión de auth (ver §7.2) — no hay Redux/Zustand.
+- **TanStack Query** para todo el estado de servidor (fetch, caché, loading, error, reintentos). El estado global "manual" son dos Context de React — la sesión de auth (§7.2) y la cola de subidas (§7.4, desde la Fase 8) — no hay Redux/Zustand. La cola de subidas es una excepción deliberada, no el patrón por defecto: existe porque una subida por chunks debe seguir corriendo aunque el componente que la inició se desmonte (cerrar el modal, cambiar de página), algo que una `mutation` de TanStack Query atada al ciclo de vida de un componente no da por sí sola.
 - **Axios** como cliente HTTP, `withCredentials: true` siempre — la auth va por cookies, nunca por header manual (ver §5.2)
 - **Zod** para validar respuestas de API y formularios
 - **react-hook-form** + Zod para formularios
@@ -53,10 +53,15 @@ src/
 ├── app/
 │   ├── App.tsx                 # providers (QueryClient, AuthProvider, Router) + layout raíz
 │   ├── router.tsx               # definición de rutas, lazy loading
-│   └── layout/                  # AppShell, TopHeader, Sidebar (navegación por módulos)
+│   └── layout/                  # AppShell, TopHeader, Sidebar (navegación por módulos),
+│                                 # UploadTray (bandeja persistente de subidas, §6.16)
 ├── features/
 │   ├── auth/                    # solo login + restauración de sesión (NO registro, ver §5.2)
 │   ├── files/                   # explorador de archivos + carpetas (lista unificada, ver §6.3)
+│   │   └── uploadQueue/          # Context de la cola de subidas por chunks (§6.5/§7.4):
+│   │                             # types.ts, pipeline.ts (lógica pura + llamadas a la API,
+│   │                             # testeada en pipeline.test.ts) y UploadQueueContext.tsx
+│   │                             # (Provider + hook useUploadQueue, montado en AppShell)
 │   ├── account/                 # /me: perfil, cambiar contraseña, ajustes, ver mis permisos
 │   ├── admin-users/              # listar/ver/crear/borrar usuarios, editar límites de storage
 │   ├── admin-permissions/        # editar permisos por módulo de un usuario (reglas de auth distintas
@@ -122,6 +127,13 @@ type ApiObjResponse<T> = {
 | UserSettingsNotFound | 1015 | 404 | Se reutiliza para UserSettings y UserAdminSettings |
 | StorageLimitExceeded | 1016 | 413 | Cuota de almacenamiento superada |
 | UserHasAssociatedData | 1017 | 409 | No se puede borrar usuario con archivos/carpetas |
+| UploadSessionNotFound | 1018 | 404 | Sesión de subida no existe o no es tuya |
+| UploadIncomplete | 1019 | 400 | Faltan chunks por recibir al llamar a `complete` |
+| UploadSessionNotActive | 1020 | 409 | La sesión ya está cancelada (no se puede recibir más chunks) |
+| InvalidChunkSize | 1021 | 400 | El chunk escrito en disco no coincide con el tamaño recibido |
+| InvalidChunkNumber | 1022 | 400 | `chunkNumber` fuera de `[1, totalChunks]` |
+| AssembledFileSizeMismatch | 1023 | 500 | El archivo ensamblado no coincide con `totalSizeBytes` declarado en `init` |
+| InvalidUploadRequest | 1024 | 400 | `totalChunks`/`totalSizeBytes` inválidos en `init` |
 | InternalError | 9999 | 500/400 | Error no controlado |
 
 Patrón: cada mutation/query captura el error, lo pasa por `getErrorMessage(errorCode)` de `shared/api/errors.ts`, y se muestra con un toast de sonner (ver §6.8). Los toasts de error usan siempre este mensaje mapeado cuando el código es conocido, nunca un genérico si hay uno específico disponible.
@@ -180,6 +192,14 @@ Base: todas bajo `/api`, autenticadas salvo que se diga lo contrario.
 - `PATCH /files/{id}` — **✅ existe (confirmado julio 2026), pero con un bug crítico activo, ver aviso abajo** — `{ NewFolderId?: int | null, NewFileName?: string }` (nombres reales, distintos de lo que se asumía originalmente; `NewFolderId: null` = mover a raíz) → `GetFileItemDto`. Errores esperables: `FileNotFound` (1001), `FolderNotFound` (1002) — ambos confirmados en prueba real. `FILE_MOVE_ENABLED = true` desde julio 2026.
   - **⚠️ Trampa real del contrato**: `NewFolderId` se asigna siempre a la entidad sin comprobar si vino en el body — **omitirlo en una llamada de solo-renombrar movería el archivo a la raíz sin querer**. El front SIEMPRE envía el `NewFolderId` actual del archivo junto con `NewFileName` al renombrar (nunca solo el nombre) — no simplificar esto en el futuro sin recordar esta trampa.
 - **Búsqueda — `GET /files/search` ya existe (julio 2026), sin integrar todavía.** Verifica su forma real (parámetros, si acota por carpeta o recorre todo el árbol, paginación) contra el código antes de sustituir el filtro local actual (§6.3) — no lo diseñes de memoria, ya no es un endpoint hipotético. Márcalo en el código (`// PENDIENTE (CLAUDE.md §5.4): sustituir el filtro local por GET /files/search, verificar su forma real primero`).
+
+**Upload por chunks** (módulo `Files`) — **verificado por lectura directa del backend en la Fase 8 (`UploadController`, `UploadService`, julio 2026).** `POST /files` (multipart único, arriba) **sigue existiendo en el backend, sin retirar**, pero el front ya no lo usa — todas las subidas pasan por este pipeline (§6.5/§7.4), incluidas las de un solo chunk.
+- `POST /files/upload/init` — `{ fileName, totalSizeBytes, totalChunks, folderId? }` → `{ sessionId: Guid }` (201 vía envelope estándar, no 201 HTTP real — el controller devuelve `Ok`). Aquí ya se valida `MaxFileSizeBytes` efectivo y la cuota de storage — errores esperables: `FileTooLarge` (1004), `StorageLimitExceeded` (1016), `FolderNotFound` (1002, si `folderId` no existe o no es tuyo — lanza `ParentFolderNotFoundException`, mapeada a este código), `InvalidUploadRequest` (1024, `totalChunks`/`totalSizeBytes` inválidos).
+- `POST /files/upload/chunk` — `multipart/form-data: sessionId, chunkNumber (1-based), chunk` — límite servidor 35MB por request (`[RequestSizeLimit(35_000_000)]`, margen sobre chunks de 20-30MB — el front usa 24MB fijo, `CHUNK_SIZE_BYTES` en `pipeline.ts`). **La recepción NO exige orden** — el backend solo comprueba `1 <= chunkNumber <= totalChunks` y trackea recibidos por número (`UploadChunkRepository`); el ensamblado en `complete` sí es secuencial. Reenviar el mismo `chunkNumber` es idempotente (sobrescribe el chunk en disco, no duplica el registro). Errores: `UploadSessionNotFound` (1018), `UploadSessionNotActive` (1020, sesión cancelada), `InvalidChunkNumber` (1022), `InvalidChunkSize` (1021, tamaño escrito ≠ tamaño recibido), `FileTooLarge` (1004, si la suma de chunks recibidos supera `MaxFileSizeBytes` — cancela la sesión server-side).
+- `GET /files/upload/{sessionId}/status` → `{ sessionId, totalChunks, receivedChunks: number[] }`. El front lo usa **solo para reanudar tras un error** (`retryEntry`, §7.4) — nunca en el camino feliz, donde ya sabe qué ha subido con éxito porque esperó cada chunk secuencialmente.
+- `POST /files/upload/{sessionId}/complete` → ensambla los chunks en orden, valida tamaño total, extensión (whitelist) y los primeros bytes contra el tipo real declarado, crea el `FileItem` y borra la carpeta temporal de la sesión. **Devuelve una forma distinta si la sesión ya estaba completada** (llamada duplicada): `ApiObjResponse<string>` con un mensaje informativo en vez de `UploadFileResponseDto` — el front lo contempla con `uploadCompleteResponseSchema` (`z.union`). Errores: `UploadIncomplete` (1019, faltan chunks), `UploadSessionNotActive` (1020), `AssembledFileSizeMismatch` (1023), `InvalidFileExtensionException` (mapea a un código de validación de archivo ya existente — mismo que la subida clásica).
+- **Sesiones huérfanas**: `UploadService.CleanupFinishedSessionsAsync` existe y hay opciones de configuración (`UploadCleanupOptions.RunAtHourUtc`, 3 UTC por defecto), pero **no encontré ningún `BackgroundService` que la invoque** en la Fase 8 — puede ser un hueco real o estar pendiente de terminar en el backend. No bloquea al front (una sesión cancelada/abandonada simplemente no se limpia automáticamente todavía), pero si en algún momento se ve que las sesiones huérfanas se acumulan sin límite, este es el punto a preguntar al usuario.
+- **No hay endpoint de cancelación explícita de una sesión.** Cancelar desde el front (§7.4) solo deja de mandar chunks — la sesión queda huérfana en el servidor hasta que exista ese endpoint o se enganche la limpieza de arriba. `// PENDIENTE (CLAUDE.md §5.4): cuando exista DELETE /files/upload/{sessionId}, llamarlo desde cancelEntry en vez de solo abortar client-side.`
 
 **Folders** (módulo `Files`)
 - `POST /folders` — `{ Name, ParentFolderId? }` → `CreateFolderResponseDto` (201)
@@ -248,7 +268,7 @@ Base: todas bajo `/api`, autenticadas salvo que se diga lo contrario.
 - No hay jerarquía de roles más allá de Admin/User — no construyas UI para "roles personalizados".
 - CORS del backend hoy solo permite `http://localhost:5173`. Cuando el proyecto nuevo tenga su propio puerto/dominio, pide al usuario que añada ese origen en `Cors:AllowedOrigins` del backend — el front no puede arreglar esto por su cuenta.
 - Fechas mezcladas entre `DateTime` (UTC) y `DateTimeOffset`, pero ambas serializan con sufijo `Z`. Trátalas siempre como string ISO con un único helper (`shared/lib/formatDate.ts`).
-- La subida de archivos hoy es un único `POST` multipart. El usuario planea migrar a un sistema de subida por paquetes más adelante — por eso la subida vive detrás de `useUploadFile` (ver §6.5), para que ese cambio no obligue a tocar componentes de UI.
+- **Migración a subida por chunks completada (Fase 8).** La previsión de este documento se cumplió: gracias a que la subida vivía detrás de un único punto (antes `useUploadFile`, ahora `useUploadQueue`, §6.5/§7.4), migrar de un `POST` multipart único al pipeline por chunks no obligó a tocar ningún componente de UI salvo el propio modal de subida (que además cambió por una razón aparte: pasó a leer de un Context global en vez de estado local, para sobrevivir a cerrarse — ver §7.4). `POST /files` (multipart clásico) sigue vivo en el backend sin retirar, pero el front ya no lo usa para nada.
 - **`GET /users/me/settings-overview` devuelve el límite de storage sin resolver — matizado en julio 2026.** `Limits.StorageLimitBytes` puede llegar `null` si el usuario no tiene un override propio. **Verificado en la Fase 2a**: un usuario creado correctamente vía `/auth/register` sí obtuvo valores resueltos (10 GB / 500 MB) — el caso `null` parece darse solo con usuarios mal aprovisionados (insertados a mano en BD sin las filas de settings que crea el flujo normal de registro), no como comportamiento general del endpoint. Aun así, **el front sigue sin asumir nunca un valor global hardcodeado** si llega `null` — mostrar solo el uso, sin comparar contra un límite (ver §6.12). Barato de mantener como red de seguridad aunque el caso sea raro.
 
 ## 6. Diseño visual
@@ -333,11 +353,11 @@ Reglas generales: radio grande y consistente (`rounded-xl`/`2xl` en cards y moda
 Todos comparten el componente `Modal` (overlay oscuro, tarjeta centrada, radio 16px, cabecera con título + cerrar, pie con botón secundario con borde + botón primario relleno de acento), en su variante **pequeña** (§6.14) — ninguno de estos necesita el tamaño grande:
 - **Crear carpeta / renombrar**: input de texto simple + Cancelar/Guardar.
 - **Eliminar**: mensaje de confirmación + Cancelar/Eliminar.
-- **Subir archivo(s)**: muestra la carpeta destino arriba ("Subiendo a" + icono + nombre), zona de arrastre que admite varios archivos a la vez o selección por clic, cada archivo en su propia fila con nombre/tamaño y su propio estado (barra de progreso con %, "En cola", o check de completado) más una `x` para quitarlo antes de subir. Pie con resumen ("X de Y completado") y botón de acción con recuento ("Subir 3 archivos").
+- **Subidas**: muestra la carpeta destino arriba ("Subiendo a" + icono + nombre) solo cuando se abre con un destino activo (desde el botón "Subir" de Archivos — ver §6.16 para cuando se abre sin destino), zona de arrastre que admite varios archivos a la vez o selección por clic, cada archivo en su propia fila con nombre/tamaño, carpeta destino y su propio estado (barra de progreso con %, "En cola", check de completado, error o cancelada). Pie con resumen ("X de Y completado"). **Cambio respecto al diseño original de esta sección (Fase 8)**: ya no hay un botón de confirmar el lote ("Subir 3 archivos") — un archivo entra directamente en la cola persistente al soltarlo/elegirlo y arranca en cuanto hay hueco (§7.4); la ventana de "quitarlo antes de subir" que daba ese botón la cubre de sobra poder cancelar cualquier entrada en cualquier momento (en cola o ya subiendo), algo que el diseño anterior no permitía una vez confirmado el lote. Cada fila con más de un chunk (archivos por encima de ~24MB) tiene un chevron que expande una tira de fragmentos coloreados por estado (pendiente/subiendo/hecho/error) — más detalle que el `%` agregado para archivos grandes. Filas en error o canceladas llevan un botón "Reintentar" (reanuda desde el último chunk confirmado, §7.4) y una `x` para quitarlas de la lista.
 
 ### 6.5 Subida de archivos — abstracción obligatoria
 
-Toda la lógica de subida vive detrás de un único hook, `useUploadFile` (en `shared/hooks/` o dentro de `features/files/`, pero un único punto). Hoy hace un `POST /files` multipart; cuando el backend pase a subida por paquetes, **solo cambia la implementación interna de ese hook** — ningún componente que lo consume debe enterarse del cambio de transporte.
+Toda la lógica de subida vive detrás de un único punto: `useUploadQueue` (`features/files/uploadQueue/`, ver §7.4). Es un pipeline por chunks (§5.4) desde la Fase 8 — antes era un `POST /files` multipart único (`useUploadFile`); la migración no tocó ningún componente de UI salvo el propio modal (§6.4), que cambió por un motivo aparte (pasó a leer de un Context global, no de estado local, para sobrevivir a cerrarse). Si el transporte vuelve a cambiar en el futuro, la regla se mantiene: **solo cambia la implementación interna de `uploadQueue/`**, ningún componente que lo consume debe enterarse.
 
 ### 6.6 Tablas de Admin (usuarios, logs, auditoría)
 
@@ -409,6 +429,15 @@ No estaba escrito en este documento hasta la auditoría de calidad de la Fase 7,
 
 El botón "Reintentar" del fallback fuerza un remontaje real del subárbol (vía una `key` que se incrementa), no solo oculta el mensaje de error — si el problema era de estado local roto, un remontaje limpio tiene más opciones de arreglarlo que simplemente volver a renderizar el mismo estado. Sin servicio de reporting de errores todavía (§2: no hay CI/monitoring montado) — de momento el error se registra solo con `console.error`, sería el siguiente paso natural si el proyecto añade telemetría más adelante.
 
+### 6.16 Bandeja de subidas — convención añadida en Fase 8
+
+`UploadTray` (`app/layout/UploadTray.tsx`), montada en `AppShell` junto al modal de Subidas (§6.4) y al `UploadQueueProvider` (§7.4) que da estado a ambos. Es la pieza que hace visible que una subida sigue corriendo aunque se haya cerrado el panel de detalle: una píldora flotante fija abajo a la derecha, visible en **cualquier pantalla** (no solo en Archivos) mientras haya entradas en la cola y el panel esté cerrado — clic para reabrirlo.
+
+- **Contenido según estado**: spinner + "Subiendo N archivos · X%" mientras haya algo activo (en cola o subiendo); si no hay nada activo pero hay errores, icono de alerta + "N archivos con error al subir"; si todo terminó bien, "N archivos subidos".
+- **Se oculta** si no hay ninguna entrada en la cola, o si el panel de detalle ya está abierto (evita duplicar el mismo aviso dos veces en pantalla).
+- **Exige el módulo `Files`** igual que `StorageWidget` (§6.12) — mismo patrón de guardia explícita con `usePermissions().hasModule()`, aunque en la práctica la cola nunca tiene entradas sin ese módulo (solo se puede añadir un archivo desde una pantalla que ya lo exige).
+- **Abrir el panel desde aquí, en vez de desde "Subir" en Archivos, lo abre sin carpeta de destino activa** (`openPanel()` sin argumento) — el panel entra en modo "solo consulta": no admite soltar archivos nuevos (§6.4), solo mostrar/cancelar/reintentar lo que ya hay en curso. Tiene sentido: si el usuario está en Monitor cuando reabre el panel, no hay ninguna carpeta "actual" a la que asignar un archivo nuevo.
+
 ## 7. Patrones de código
 
 ### 7.1 Data fetching
@@ -420,8 +449,21 @@ Contexto de React: access token en memoria (solo para decodificar claims, ver §
 ### 7.3 Permisos (`shared/hooks/usePermissions`)
 Envuelve `GET /users/me/permissions` con TanStack Query. Expone `hasModule(module: AppModule)` e `isAdmin` (derivado del claim de rol). Toda comprobación de acceso —guards de ruta y botones de acción individuales— pasa por aquí, nunca se reimplementa la lógica de "¿puedo ver esto?" en una página suelta. **`hasModule()` debe devolver `true` automáticamente si `isAdmin` es `true`, sin mirar los flags reales** — replica el comportamiento del backend (§5.3: el rol Admin pasa siempre, sin comprobar módulo). Si no se replica esto, un Admin podría ver un sidebar incompleto por un dato de permisos que en su caso ni siquiera debería consultarse. **Validado en julio 2026**: cualquier usuario sin fila de permisos en BD (no solo Admins, aunque solo se ha observado en Admins porque son los únicos insertados a mano) da 404/`PermissionsNotFound` en `GET /users/me/permissions` — sin upsert, tampoco el `PATCH` crea la fila si no existe. Por eso la query debe ir con `enabled: !isAdmin` (nunca dispararse para un Admin), no solo ignorar el resultado si llega.
 
-### 7.4 Subida de archivos (`shared/hooks/useUploadFile`)
-Ver §6.5 — es la única vía para subir archivos en todo el proyecto.
+### 7.4 Subida de archivos (`features/files/uploadQueue/`) — pipeline por chunks, Fase 8
+
+Ver §6.5 — es la única vía para subir archivos en todo el proyecto. Tres piezas, cada una con su responsabilidad:
+
+- **`pipeline.ts`** — funciones puras y testeadas (`pipeline.test.ts`, §9) más las llamadas HTTP a los 4 endpoints de §5.4: `computeChunkPlan` (cuántos chunks y de qué tamaño exacto cada uno), `aggregateProgress` (% sobre el tamaño TOTAL del archivo, no del chunk en curso — evita saltos bruscos en la barra), `backoffDelayMs`, y `initUploadSession`/`uploadChunkWithRetry`/`getUploadStatus`/`completeUploadSession`.
+  - **`CHUNK_SIZE_BYTES = 24MB`** — fijo, dentro del margen que documenta el propio backend (`RequestSizeLimit` de 35MB, comentario "margen sobre chunks de 20-30MB" en `UploadController.ReceiveChunkAsync`).
+  - **`MAX_CONCURRENT_UPLOADS = 2`** — cuántos archivos suben a la vez; dentro de cada archivo los chunks van siempre secuenciales, nunca en paralelo. Existe para proteger el rate limit global del backend (100 req/min por IP, compartido con el resto de la app — `RateLimiterExtensions.cs`): sin este límite, un lote de archivos grandes agota el cupo y empieza a recibir 429 a mitad de una subida.
+  - **Reintentos por chunk** (`uploadChunkWithRetry`): hasta 3 intentos con backoff exponencial (500ms/1s/2s) antes de propagar el error — un chunk suelto puede fallar por un corte de red momentáneo o un 429 puntual sin perder el archivo entero. Un error de `init` (`FileTooLarge`, `StorageLimitExceeded`, etc.) no se reintenta — es una respuesta determinista del backend, no algo transitorio.
+- **`UploadQueueContext.tsx`** — el `UploadQueueProvider` (Context de React) y el hook `useUploadQueue`. Se monta **una única vez en `AppShell`** (§6.2), nunca dentro del propio modal — es la segunda excepción documentada a "el único estado global manual es auth" (§3), justificada porque una subida de un archivo grande debe seguir corriendo aunque el usuario cierre el panel de detalle (§6.4) o navegue a otra pantalla; una `mutation` de TanStack Query atada al ciclo de vida de un componente no da eso por sí sola. Gestiona: la lista de entradas (`entries`), qué carpeta es el destino activo para archivos nuevos (`activeTarget`, ver §6.16 para cuándo es `null`), el estado abierto/cerrado del panel, y una cola interna que promueve entradas de `queued` a `uploading` respetando `MAX_CONCURRENT_UPLOADS` cada vez que la lista cambia.
+  - **Reanudación tras error** (`retryEntry`): si la entrada ya tenía `sessionId` (llegó a hacer `init` con éxito antes de fallar), reintentar llama primero a `GET /status` (§5.4) para saber qué chunks confirmó el servidor y solo reenvía los que faltan — no repite un archivo de 500MB entero por un fallo en el chunk 19 de 20.
+  - **Cancelar** (`cancelEntry`): aborta la petición en curso vía `AbortController` y no programa más chunks para esa entrada. Sin endpoint de cancelación en el backend todavía (§5.4) — la sesión queda huérfana server-side hasta que exista ese endpoint o se enganche la limpieza automática.
+  - **Aviso de `beforeunload`** mientras haya algo `queued`/`uploading`: cerrar el **panel** nunca pierde nada (el Provider sigue vivo en AppShell), pero cerrar o recargar la **pestaña del navegador** sí — de ahí el aviso nativo. Reanudar una subida entre recargas de página (persistiendo `sessionId` y retomando con `GET /status` igual que en un reintento) queda fuera de alcance por ahora — es la mejora natural si hiciera falta más adelante, ya que la pieza que la habilitaría (`GET /status`) ya existe y ya se usa para el caso más acotado de reintento dentro de la misma sesión del navegador.
+- **`types.ts`** — `UploadQueueEntry`, `ChunkStatus`, `UploadTarget`.
+
+Invalidación de caché: al completar una entrada, invalida `filesKeys.contents(entry.folderId)` y `filesKeys.storageUsage` (§7.8) — igual que hacía la `useUploadFile` original, solo que ahora vive dentro del propio `UploadQueueProvider` en vez de en una `mutation` de `features/files/api.ts`.
 
 ### 7.5 Drag & drop y mover/renombrar archivos — endpoint real desde julio 2026, con bug de persistencia activo
 `dnd-kit`, sensores de puntero. Ver §6.3 para el comportamiento exacto (mover a carpeta, mover a breadcrumb con navegación al mantener encima).
@@ -464,6 +506,8 @@ Cuando el backend implemente Expenses/Investments/RemoteScripts (o cualquier mó
 ## 9. Testing
 
 Vitest para lo que no es visual: `shared/api/client.ts` (parseo del envelope y mapeo de errores), hooks de datos de cada feature, la lógica de ordenación de la lista de archivos (carpetas primero, criterio activo), schemas de Zod. No hay tests de componentes visuales ni end-to-end por ahora.
+
+**`features/files/uploadQueue/pipeline.test.ts`** (Fase 8) es el caso de referencia de "lógica no visual" dentro de una pieza que por lo demás está muy pegada a red/estado: `computeChunkPlan`, `aggregateProgress` y `backoffDelayMs` (§7.4) son funciones puras, sin `api` ni React de por medio, así que se testean directo sin mockear axios ni renderizar nada — el resto del pipeline (las llamadas HTTP y el propio `UploadQueueContext`) no tiene test todavía, igual que el resto de componentes visuales de la app.
 
 ## 10. Móvil — app nativa aparte, no Capacitor
 

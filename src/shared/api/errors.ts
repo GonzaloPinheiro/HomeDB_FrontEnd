@@ -20,6 +20,15 @@ export const ApiErrorCodes = {
   UserSettingsNotFound: 1015,
   StorageLimitExceeded: 1016,
   UserHasAssociatedData: 1017,
+  // CLAUDE.md §5.4: subida por chunks (UploadController) — verificados contra
+  // HomeDB.Domain/Common/ApiErrorCodes.cs.
+  UploadSessionNotFound: 1018,
+  UploadIncomplete: 1019,
+  UploadSessionNotActive: 1020,
+  InvalidChunkSize: 1021,
+  InvalidChunkNumber: 1022,
+  AssembledFileSizeMismatch: 1023,
+  InvalidUploadRequest: 1024,
   InternalError: 9999,
 } as const
 
@@ -41,6 +50,13 @@ const ERROR_MESSAGES: Record<number, string> = {
   [ApiErrorCodes.UserSettingsNotFound]: 'No se encontraron los ajustes del usuario',
   [ApiErrorCodes.StorageLimitExceeded]: 'Has superado tu límite de almacenamiento',
   [ApiErrorCodes.UserHasAssociatedData]: 'El usuario tiene archivos o carpetas y no se puede eliminar',
+  [ApiErrorCodes.UploadSessionNotFound]: 'La sesión de subida no existe o ha caducado',
+  [ApiErrorCodes.UploadIncomplete]: 'Faltan fragmentos por recibir antes de poder completar la subida',
+  [ApiErrorCodes.UploadSessionNotActive]: 'Esta subida ya no está activa',
+  [ApiErrorCodes.InvalidChunkSize]: 'Un fragmento del archivo llegó incompleto — reintenta la subida',
+  [ApiErrorCodes.InvalidChunkNumber]: 'Fragmento fuera de rango para esta subida',
+  [ApiErrorCodes.AssembledFileSizeMismatch]: 'El archivo ensamblado no coincide con el tamaño esperado — reintenta la subida',
+  [ApiErrorCodes.InvalidUploadRequest]: 'Los datos para iniciar la subida no son válidos',
   [ApiErrorCodes.InternalError]: 'Error inesperado del servidor',
 }
 
