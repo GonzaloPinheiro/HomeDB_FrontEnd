@@ -18,6 +18,15 @@ export const MAX_CONCURRENT_UPLOADS = 2
 const MAX_CHUNK_ATTEMPTS = 3
 const BASE_RETRY_DELAY_MS = 500
 
+// CLAUDE.md §7.4: sin progreso nuevo durante 20s se considera una conexión
+// realmente colgada (no solo lenta) y se aborta para que uploadChunkWithRetry
+// lo trate como un fallo transitorio más. Un timeout fijo de duración total
+// (como el de 30s de la instancia de axios, client.ts) mataría un chunk de
+// 24MB legítimamente lento en una conexión pobre aunque siguiera avanzando —
+// por eso este chunk desactiva ese timeout (`timeout: 0`) y usa en su lugar
+// este temporizador que se reinicia en cada evento de progreso real.
+const STALL_TIMEOUT_MS = 20_000
+
 export type ChunkPlan = {
   totalChunks: number
   /** Tamaño real de cada chunk en bytes — todos iguales a CHUNK_SIZE_BYTES salvo el último. */
@@ -87,11 +96,34 @@ async function sendChunk(
   formData.append('sessionId', sessionId)
   formData.append('chunkNumber', String(chunkNumber))
   formData.append('chunk', blob)
-  const response = await api.post<ApiObjResponse<unknown>>('/files/upload/chunk', formData, {
-    signal,
-    onUploadProgress: (event) => onProgress(event.loaded),
-  })
-  unwrap(response.data)
+
+  // Puente entre la cancelación real (signal, viene de cancelEntry/§7.4) y el
+  // aborto por stall de abajo — cualquiera de los dos corta la petición.
+  const requestController = new AbortController()
+  const onOuterAbort = () => requestController.abort()
+  signal.addEventListener('abort', onOuterAbort)
+
+  let stallTimer: ReturnType<typeof setTimeout> | undefined
+  const resetStallTimer = () => {
+    clearTimeout(stallTimer)
+    stallTimer = setTimeout(() => requestController.abort(), STALL_TIMEOUT_MS)
+  }
+  resetStallTimer()
+
+  try {
+    const response = await api.post<ApiObjResponse<unknown>>('/files/upload/chunk', formData, {
+      signal: requestController.signal,
+      timeout: 0, // sin techo de duración total — lo controla el temporizador de stall
+      onUploadProgress: (event) => {
+        resetStallTimer()
+        onProgress(event.loaded)
+      },
+    })
+    unwrap(response.data)
+  } finally {
+    clearTimeout(stallTimer)
+    signal.removeEventListener('abort', onOuterAbort)
+  }
 }
 
 /**

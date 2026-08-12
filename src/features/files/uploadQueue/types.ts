@@ -19,6 +19,14 @@ export type UploadQueueEntry = {
   /** Id de la sesión de subida en el backend — se conserva tras un error para poder reanudar con GET /status (CLAUDE.md §7.4) en vez de repetir chunks ya confirmados. */
   sessionId?: string
   error?: string
+  /**
+   * Código de ApiErrorCodes del último fallo, o `null` si nunca llegó una
+   * respuesta real del backend (corte de red, stall, timeout — ver toApiError).
+   * CLAUDE.md §7.4: distingue un error de red (se reintenta solo al volver la
+   * conexión) de un rechazo real del servidor (FileTooLarge, etc. — reintentar
+   * solo no lo arregla, hace falta acción del usuario).
+   */
+  errorCode?: number | null
 }
 
 /** Carpeta activa para añadir archivos nuevos al abrir el panel. Ausente = panel de solo consulta (abierto desde la bandeja persistente en otra pantalla, CLAUDE.md §6.16). */

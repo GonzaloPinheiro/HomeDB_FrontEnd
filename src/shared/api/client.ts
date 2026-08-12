@@ -18,9 +18,17 @@ export class ApiError extends Error {
 
 // CLAUDE.md §5.2: la auth va por cookies httpOnly — withCredentials siempre,
 // nunca un header Authorization manual.
+// CLAUDE.md §7.4: timeout por defecto de 30s — protege las peticiones JSON
+// normales (login, listar, mutations) de un corte de red "silencioso" que de
+// otro modo se quedaría colgado sin fallar nunca. Las dos rutas de
+// transferencia grande (subir un chunk y descargar un archivo, ambas pueden
+// tardar perfectamente más de 30s en una conexión lenta sin que eso sea un
+// fallo) desactivan este timeout explícitamente por request — ver
+// `sendChunk` en uploadQueue/pipeline.ts y `downloadFile` en features/files/api.ts.
 export const api = axios.create({
   baseURL: `${env.VITE_API_URL}/api`,
   withCredentials: true,
+  timeout: 30_000,
 })
 
 // Registrado por el AuthProvider: limpia el estado local y navega a /login con

@@ -259,7 +259,9 @@ export function useStorageLimit() {
  * expone; si no (CORS sin Expose-Headers), se usa el nombre ya conocido.
  */
 export async function downloadFile(fileId: number, fallbackName: string): Promise<void> {
-  const response = await api.get<Blob>(`/files/${fileId}`, { responseType: 'blob' })
+  // CLAUDE.md §7.4: sin el timeout de 30s de la instancia — una descarga
+  // grande en una conexión lenta puede tardar perfectamente más que eso.
+  const response = await api.get<Blob>(`/files/${fileId}`, { responseType: 'blob', timeout: 0 })
 
   const disposition = (response.headers['content-disposition'] as string | undefined) ?? ''
   const match = /filename\*?=(?:UTF-8''|")?([^";]+)/i.exec(disposition)

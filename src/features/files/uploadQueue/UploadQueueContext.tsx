@@ -127,7 +127,14 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
         if (controller.signal.aborted) {
           patchEntry(entry.id, { status: 'cancelled' })
         } else {
-          patchEntry(entry.id, { status: 'error', error: toApiError(error).message })
+          const apiError = toApiError(error)
+          // errorCode null = nunca llegó una respuesta real del backend (red
+          // caída, stall, timeout) — es justo el caso que reintenta solo el
+          // efecto de 'online' de abajo. Un código concreto (FileTooLarge,
+          // StorageLimitExceeded...) es un rechazo real del servidor: seguirá
+          // fallando igual aunque vuelva la conexión, así que no se reintenta
+          // solo, se deja para que el usuario decida.
+          patchEntry(entry.id, { status: 'error', error: apiError.message, errorCode: apiError.errorCode })
         }
       } finally {
         controllersRef.current.delete(entry.id)
@@ -207,7 +214,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
       startedRef.current.delete(id)
       // sessionId se conserva a propósito: si existe, runPipeline reanuda con
       // GET /status en vez de repetir chunks ya confirmados por el servidor.
-      patchEntry(id, { status: 'queued', error: undefined })
+      patchEntry(id, { status: 'queued', error: undefined, errorCode: undefined })
     },
     [patchEntry],
   )
@@ -216,6 +223,23 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
     startedRef.current.delete(id)
     setEntries((current) => current.filter((entry) => entry.id !== id))
   }, [])
+
+  // CLAUDE.md §7.4: al recuperar conexión, reintenta solo las entradas que
+  // fallaron por un problema de red (errorCode null — nunca hubo respuesta
+  // real del backend). Un rechazo real del servidor (FileTooLarge, etc.) no
+  // se arregla solo porque vuelva la conexión, se deja tal cual para que el
+  // usuario decida (sigue teniendo el botón "Reintentar" manual).
+  useEffect(() => {
+    const onOnline = () => {
+      for (const entry of entries) {
+        if (entry.status === 'error' && entry.errorCode === null) {
+          retryEntry(entry.id)
+        }
+      }
+    }
+    window.addEventListener('online', onOnline)
+    return () => window.removeEventListener('online', onOnline)
+  }, [entries, retryEntry])
 
   const value = useMemo<UploadQueueContextValue>(
     () => ({ entries, isPanelOpen, activeTarget, openPanel, closePanel, addFiles, cancelEntry, retryEntry, removeEntry }),
