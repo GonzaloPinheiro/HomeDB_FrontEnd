@@ -39,3 +39,29 @@ export function formatDateTime(iso: string): string {
   if (Number.isNaN(date.getTime())) return '—'
   return FULL_DATE_TIME.format(date).replace(/\./g, '')
 }
+
+const DAY_MONTH_TIME = new Intl.DateTimeFormat('es-ES', {
+  day: 'numeric',
+  month: 'short',
+  hour: '2-digit',
+  minute: '2-digit',
+})
+const DAY_MONTH_YEAR_TIME = new Intl.DateTimeFormat('es-ES', {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+})
+
+/**
+ * ISO -> fecha y hora compactas para paneles estrechos: "12 jul, 03:00" (año en
+ * curso) o "12 jul 2025, 03:00" (otros años). Sin segundos, a diferencia de
+ * `formatDateTime`. `now` es inyectable solo para los tests.
+ */
+export function formatShortDateTime(iso: string, now: Date = new Date()): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return '—'
+  const formatter = date.getFullYear() === now.getFullYear() ? DAY_MONTH_TIME : DAY_MONTH_YEAR_TIME
+  return formatter.format(date).replace(/\./g, '')
+}

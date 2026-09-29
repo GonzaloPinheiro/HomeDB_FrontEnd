@@ -1,4 +1,5 @@
 import { Activity, Cpu, HardDrive, MemoryStick, RefreshCw, Thermometer } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 
 import { toApiError } from '@/shared/api/client'
@@ -9,6 +10,7 @@ import { formatBytes } from '@/shared/lib/formatBytes'
 import { cn } from '@/shared/lib/utils'
 
 import { useLastMetric, useMetricsHistory, type MetricRange } from '../api'
+import { backupKeys, useBackupUnloadGuard } from '../backups/api'
 import { METRIC_THRESHOLDS, METRIC_UNITS, getThresholdStatus, type MetricKey } from '../thresholds'
 import type { SystemMetrics } from '../types'
 import { FanStatusInline } from './FanStatus'
@@ -59,13 +61,18 @@ export function SystemMonitorDashboard() {
   const [selected, setSelected] = useState<MetricKey>('cpu')
   const [range, setRange] = useState<MetricRange>('1h')
 
+  const queryClient = useQueryClient()
   const last = useLastMetric()
   const history = useMetricsHistory(range)
+  useBackupUnloadGuard()
 
-  // CLAUDE.md §6.13/§7.9: refresco manual = refetch() de AMBAS queries activas
+  // CLAUDE.md §6.13/§7.9: refresco manual = refetch() de AMBAS queries activas,
+  // más el historial de backups si el panel de Disco está montado (invalidar
+  // solo refetchea las queries activas; las demás quedan marcadas como obsoletas)
   const refreshAll = () => {
     void last.refetch()
     void history.refetch()
+    void queryClient.invalidateQueries({ queryKey: backupKeys.all })
   }
 
   if (last.isPending) {

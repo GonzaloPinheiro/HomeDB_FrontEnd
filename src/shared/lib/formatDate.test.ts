@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { formatDateTime, formatShortDate } from './formatDate'
+import { formatDateTime, formatShortDate, formatShortDateTime } from './formatDate'
 
 // `now` fijo para que los tests no dependan del año en que se ejecutan
 const NOW = new Date('2026-07-21T12:00:00Z')
@@ -26,5 +26,20 @@ describe('formatDateTime', () => {
 
   it('string inválido', () => {
     expect(formatDateTime('no-es-una-fecha')).toBe('—')
+  })
+})
+
+describe('formatShortDateTime', () => {
+  // La hora depende de la zona horaria del entorno, así que solo se comprueba la forma
+  it('año en curso: día, mes corto y hora sin año ni segundos', () => {
+    expect(formatShortDateTime('2026-07-12T10:30:05Z', NOW)).toMatch(/^12 jul,? \d{2}:\d{2}$/)
+  })
+
+  it('otro año: incluye el año', () => {
+    expect(formatShortDateTime('2025-01-05T10:30:05Z', NOW)).toMatch(/^5 ene 2025,? \d{2}:\d{2}$/)
+  })
+
+  it('string inválido', () => {
+    expect(formatShortDateTime('no-es-una-fecha', NOW)).toBe('—')
   })
 })

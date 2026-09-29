@@ -29,6 +29,10 @@ export const ApiErrorCodes = {
   InvalidChunkNumber: 1022,
   AssembledFileSizeMismatch: 1023,
   InvalidUploadRequest: 1024,
+  // CLAUDE.md §5.4: subsistema de backups (BackupController) — verificados
+  // contra HomeDB.Domain/Common/ApiErrorCodes.cs y ExceptionHandlerMiddleware.
+  BackupAlreadyRunning: 1025,
+  BackupLevelNotSupported: 1026,
   InternalError: 9999,
 } as const
 
@@ -57,6 +61,8 @@ const ERROR_MESSAGES: Record<number, string> = {
   [ApiErrorCodes.InvalidChunkNumber]: 'Fragmento fuera de rango para esta subida',
   [ApiErrorCodes.AssembledFileSizeMismatch]: 'El archivo ensamblado no coincide con el tamaño esperado — reintenta la subida',
   [ApiErrorCodes.InvalidUploadRequest]: 'Los datos para iniciar la subida no son válidos',
+  [ApiErrorCodes.BackupAlreadyRunning]: 'Ya hay un backup en curso — espera a que termine',
+  [ApiErrorCodes.BackupLevelNotSupported]: 'Este tipo de backup todavía no está disponible',
   [ApiErrorCodes.InternalError]: 'Error inesperado del servidor',
 }
 
