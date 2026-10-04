@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { ApiObjResponse } from '@/shared/types/api'
 
-import { ApiError, toApiError, unwrap } from './client'
+import { ApiError, isRateLimitError, toApiError, unwrap } from './client'
 import { ApiErrorCodes, getErrorMessage } from './errors'
 
 function envelope<T>(partial: Partial<ApiObjResponse<T>>): ApiObjResponse<T> {
@@ -60,5 +60,36 @@ describe('toApiError', () => {
     const apiError = toApiError(new AxiosError('Network Error'))
     expect(apiError.errorCode).toBeNull()
     expect(apiError.message).toBe(getErrorMessage(null))
+  })
+})
+
+describe('rate limit (429)', () => {
+  function rateLimitResponse(headers: Record<string, string>, body: unknown) {
+    const axiosError = new AxiosError('Request failed with status code 429')
+    axiosError.response = { status: 429, data: body, headers } as never
+    return axiosError
+  }
+
+  it('conserva el estado HTTP y lee Retry-After en segundos', () => {
+    const apiError = toApiError(
+      rateLimitResponse(
+        { 'retry-after': '60' },
+        envelope({ result: false, errorCode: ApiErrorCodes.RateLimitExceeded, errorMessage: 'x' }),
+      ),
+    )
+    expect(apiError.httpStatus).toBe(429)
+    expect(apiError.retryAfterMs).toBe(60_000)
+    expect(isRateLimitError(apiError)).toBe(true)
+  })
+
+  it('detecta un 429 sin envelope (proxy) por el estado HTTP, y deja retryAfterMs a null si no hay cabecera', () => {
+    const apiError = toApiError(rateLimitResponse({}, 'Too Many Requests'))
+    expect(apiError.errorCode).toBeNull()
+    expect(apiError.retryAfterMs).toBeNull()
+    expect(isRateLimitError(apiError)).toBe(true)
+  })
+
+  it('un error de red sin respuesta no es rate limit', () => {
+    expect(isRateLimitError(toApiError(new AxiosError('Network Error')))).toBe(false)
   })
 })
