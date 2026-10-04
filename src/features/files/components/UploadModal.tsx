@@ -1,5 +1,5 @@
-import { Ban, Check, ChevronDown, ChevronRight, CircleAlert, Folder, RotateCcw, Upload, X } from 'lucide-react'
-import { useRef, useState, type ChangeEvent, type DragEvent } from 'react'
+import { Ban, Check, ChevronDown, ChevronRight, CircleAlert, Folder, Hourglass, RotateCcw, Upload, X } from 'lucide-react'
+import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from 'react'
 
 import { Modal } from '@/shared/components/Modal'
 import { Button } from '@/shared/components/ui/button'
@@ -25,8 +25,18 @@ import type { ChunkStatus, UploadQueueEntry } from '../uploadQueue/types'
 // cualquier momento (en cola o ya subiendo), algo que el diseño anterior no
 // permitía una vez pulsado "Subir".
 export function UploadModal() {
-  const { entries, isPanelOpen, activeTarget, closePanel, addFiles, cancelEntry, retryEntry, removeEntry } =
-    useUploadQueue()
+  const {
+    entries,
+    isPanelOpen,
+    rateLimitedUntil,
+    activeTarget,
+    closePanel,
+    addFiles,
+    cancelEntry,
+    retryEntry,
+    retryAllFailed,
+    removeEntry,
+  } = useUploadQueue()
   const [isDragOver, setIsDragOver] = useState(false)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
@@ -44,6 +54,8 @@ export function UploadModal() {
 
   const activeCount = entries.filter((e) => e.status === 'queued' || e.status === 'uploading').length
   const doneCount = entries.filter((e) => e.status === 'done').length
+  // Solo 'error': las 'cancelled' las canceló el usuario a propósito, no "fallaron".
+  const failedCount = entries.filter((e) => e.status === 'error').length
 
   return (
     <Modal
@@ -89,6 +101,22 @@ export function UploadModal() {
           <p className="text-xs text-text-muted">Ve a Archivos para añadir más archivos.</p>
         ) : null}
 
+        {/* Pausa global por rate limit (§7.4) — las subidas se reanudan solas */}
+        {rateLimitedUntil !== null && <RateLimitNotice until={rateLimitedUntil} />}
+
+        {/* Reintentar todos los fallidos de una vez, en vez de uno por uno */}
+        {failedCount > 0 && (
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs text-critical-text">
+              {failedCount} {failedCount === 1 ? 'archivo con error' : 'archivos con error'}
+            </span>
+            <Button variant="outline" size="sm" onClick={retryAllFailed}>
+              <RotateCcw aria-hidden />
+              Reintentar {failedCount === 1 ? 'el fallido' : 'todos'}
+            </Button>
+          </div>
+        )}
+
         {/* Filas de archivos */}
         {entries.length > 0 && (
           <ul className="flex max-h-72 flex-col gap-2 overflow-y-auto">
@@ -117,6 +145,29 @@ export function UploadModal() {
         </div>
       </div>
     </Modal>
+  )
+}
+
+// CLAUDE.md §7.4: aviso de la pausa por rate limit (429). Cuenta atrás local —
+// el Provider solo guarda el instante de reanudación, no re-renderiza cada segundo.
+function RateLimitNotice({ until }: { until: number }) {
+  const [now, setNow] = useState(() => Date.now())
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [])
+
+  const secondsLeft = Math.max(0, Math.ceil((until - now) / 1000))
+
+  return (
+    <div role="status" className="flex items-start gap-2 rounded-lg bg-warning-bg px-3 py-2 text-xs text-warning-text">
+      <Hourglass className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+      <span>
+        Demasiadas peticiones al servidor. Las subidas están en pausa y se reanudarán solas
+        {secondsLeft > 0 ? ` en ${secondsLeft} s` : ' en un instante'}.
+      </span>
+    </div>
   )
 }
 

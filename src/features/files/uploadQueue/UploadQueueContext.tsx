@@ -14,11 +14,18 @@ import {
   initUploadSession,
   uploadChunkWithRetry,
 } from './pipeline'
+import { RateLimitGate, withRateLimitRetry } from './rateLimit'
 import type { UploadQueueEntry, UploadTarget } from './types'
 
 type UploadQueueContextValue = {
   entries: UploadQueueEntry[]
   isPanelOpen: boolean
+  /**
+   * Instante (ms epoch) hasta el que la cola está en pausa por haber agotado el
+   * cupo del rate limiter (429), o `null` si no hay pausa. Las subidas se
+   * reanudan solas al llegar a ese instante (CLAUDE.md §7.4).
+   */
+  rateLimitedUntil: number | null
   /** Presente = el panel puede añadir archivos nuevos a esa carpeta; ausente = solo consulta (abierto desde la bandeja, §6.16). */
   activeTarget: UploadTarget | null
   openPanel: (target?: UploadTarget) => void
@@ -27,6 +34,8 @@ type UploadQueueContextValue = {
   cancelEntry: (id: string) => void
   /** Reintenta una entrada en error/cancelada — reanuda con GET /status si ya tenía sessionId, en vez de repetir chunks ya confirmados. */
   retryEntry: (id: string) => void
+  /** Reintenta todas las entradas en error. Las canceladas no entran: las canceló el usuario a propósito. */
+  retryAllFailed: () => void
   /** Solo válido sobre entradas terminadas (done/error/cancelled) — quita la fila de la lista. */
   removeEntry: (id: string) => void
 }
@@ -46,6 +55,10 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
   const [entries, setEntries] = useState<UploadQueueEntry[]>([])
   const [isPanelOpen, setIsPanelOpen] = useState(false)
   const [activeTarget, setActiveTarget] = useState<UploadTarget | null>(null)
+  const [rateLimitedUntil, setRateLimitedUntil] = useState<number | null>(null)
+
+  // Una única pausa compartida por todas las subidas (rateLimit.ts).
+  const [rateLimitGate] = useState(() => new RateLimitGate(Date.now, setRateLimitedUntil))
 
   // Estado imperativo que no necesita disparar un render por sí mismo.
   const controllersRef = useRef(new Map<string, AbortController>())
@@ -68,21 +81,29 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
       const controller = new AbortController()
       controllersRef.current.set(entry.id, controller)
       const plan = computeChunkPlan(entry.file.size)
+      // Toda petición HTTP del pipeline pasa por aquí: respeta la pausa global y
+      // ante un 429 la activa y reintenta sin dar el archivo por fallido.
+      const limited = <T,>(request: () => Promise<T>): Promise<T> =>
+        withRateLimitRetry(rateLimitGate, controller.signal, request)
 
       try {
-        let sessionId = entry.sessionId
         let alreadyReceived: number[] = []
+        // `const` (y no reasignado) para que las closures de abajo conserven el tipo `string`.
+        const sessionId: string =
+          entry.sessionId ??
+          (await limited(() =>
+            initUploadSession(
+              {
+                fileName: entry.file.name,
+                totalSizeBytes: entry.file.size,
+                totalChunks: plan.totalChunks,
+                folderId: entry.folderId,
+              },
+              controller.signal,
+            ),
+          ))
 
-        if (!sessionId) {
-          sessionId = await initUploadSession(
-            {
-              fileName: entry.file.name,
-              totalSizeBytes: entry.file.size,
-              totalChunks: plan.totalChunks,
-              folderId: entry.folderId,
-            },
-            controller.signal,
-          )
+        if (!entry.sessionId) {
           patchEntry(entry.id, {
             sessionId,
             totalChunks: plan.totalChunks,
@@ -90,7 +111,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
           })
         } else {
           // Reintento (§7.4): reanuda preguntando qué llegó ya en vez de repetirlo.
-          alreadyReceived = await getUploadStatus(sessionId, controller.signal)
+          alreadyReceived = await limited(() => getUploadStatus(sessionId, controller.signal))
           patchEntry(entry.id, {
             chunks: Array.from({ length: plan.totalChunks }, (_, i) =>
               alreadyReceived.includes(i + 1) ? 'done' : 'pending',
@@ -106,11 +127,13 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
           const start = (chunkNumber - 1) * CHUNK_SIZE_BYTES
           const blob = entry.file.slice(start, start + plan.chunkSizes[chunkNumber - 1])
 
-          await uploadChunkWithRetry(sessionId, chunkNumber, blob, controller.signal, (loadedBytes) => {
-            patchEntry(entry.id, {
-              progress: aggregateProgress(plan.chunkSizes, doneChunkCount, loadedBytes, entry.file.size),
-            })
-          })
+          await limited(() =>
+            uploadChunkWithRetry(sessionId, chunkNumber, blob, controller.signal, (loadedBytes) => {
+              patchEntry(entry.id, {
+                progress: aggregateProgress(plan.chunkSizes, doneChunkCount, loadedBytes, entry.file.size),
+              })
+            }),
+          )
 
           doneChunkCount += 1
           setChunkStatus(entry.id, chunkNumber - 1, 'done')
@@ -119,7 +142,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
           })
         }
 
-        await completeUploadSession(sessionId, controller.signal)
+        await limited(() => completeUploadSession(sessionId, controller.signal))
         patchEntry(entry.id, { status: 'done', progress: 100 })
         void queryClient.invalidateQueries({ queryKey: filesKeys.contents(entry.folderId) })
         void queryClient.invalidateQueries({ queryKey: filesKeys.storageUsage })
@@ -140,8 +163,19 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
         controllersRef.current.delete(entry.id)
       }
     },
-    [patchEntry, queryClient, setChunkStatus],
+    [patchEntry, queryClient, rateLimitGate, setChunkStatus],
   )
+
+  // Limpia el aviso de pausa al llegar su instante. Comparar contra el valor
+  // capturado evita borrar una pausa más larga que se activara mientras tanto.
+  useEffect(() => {
+    if (rateLimitedUntil === null) return
+    const timer = setTimeout(
+      () => setRateLimitedUntil((current) => (current === rateLimitedUntil ? null : current)),
+      Math.max(0, rateLimitedUntil - Date.now()),
+    )
+    return () => clearTimeout(timer)
+  }, [rateLimitedUntil])
 
   // Promueve entradas en cola a "uploading" respetando MAX_CONCURRENT_UPLOADS
   // (CLAUDE.md §7.4) — se dispara solo, cada vez que cambia la cola: al
@@ -219,6 +253,20 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
     [patchEntry],
   )
 
+  const retryAllFailed = useCallback(() => {
+    const failedIds = new Set(entries.filter((e) => e.status === 'error').map((e) => e.id))
+    if (failedIds.size === 0) return
+    for (const id of failedIds) startedRef.current.delete(id)
+    // Mismas reglas que retryEntry (conserva sessionId para reanudar con GET /status),
+    // en una sola actualización de estado en vez de N. El planificador de arriba
+    // las va promoviendo a 'uploading' de MAX_CONCURRENT_UPLOADS en MAX_CONCURRENT_UPLOADS.
+    setEntries((current) =>
+      current.map((entry) =>
+        failedIds.has(entry.id) ? { ...entry, status: 'queued', error: undefined, errorCode: undefined } : entry,
+      ),
+    )
+  }, [entries])
+
   const removeEntry = useCallback((id: string) => {
     startedRef.current.delete(id)
     setEntries((current) => current.filter((entry) => entry.id !== id))
@@ -242,8 +290,32 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
   }, [entries, retryEntry])
 
   const value = useMemo<UploadQueueContextValue>(
-    () => ({ entries, isPanelOpen, activeTarget, openPanel, closePanel, addFiles, cancelEntry, retryEntry, removeEntry }),
-    [entries, isPanelOpen, activeTarget, openPanel, closePanel, addFiles, cancelEntry, retryEntry, removeEntry],
+    () => ({
+      entries,
+      isPanelOpen,
+      rateLimitedUntil,
+      activeTarget,
+      openPanel,
+      closePanel,
+      addFiles,
+      cancelEntry,
+      retryEntry,
+      retryAllFailed,
+      removeEntry,
+    }),
+    [
+      entries,
+      isPanelOpen,
+      rateLimitedUntil,
+      activeTarget,
+      openPanel,
+      closePanel,
+      addFiles,
+      cancelEntry,
+      retryEntry,
+      retryAllFailed,
+      removeEntry,
+    ],
   )
 
   return <UploadQueueContext.Provider value={value}>{children}</UploadQueueContext.Provider>

@@ -1,4 +1,4 @@
-import { api, toApiError, unwrap } from '@/shared/api/client'
+import { api, isRateLimitError, toApiError, unwrap } from '@/shared/api/client'
 import type { ApiObjResponse } from '@/shared/types/api'
 
 import { uploadCompleteResponseSchema, uploadInitResponseSchema, uploadStatusResponseSchema } from '../types'
@@ -12,7 +12,9 @@ export const CHUNK_SIZE_BYTES = 24 * 1024 * 1024
 // van secuenciales (nunca en paralelo). Protege el rate limit global del
 // backend (100 req/min por IP, compartido con el resto de la app — ver
 // RateLimiterExtensions.cs) — sin este límite, subir varios archivos grandes
-// a la vez agota el cupo y empieza a devolver 429 a mitad de una subida.
+// a la vez agota el cupo y empieza a devolver 429 a mitad de una subida. Si
+// aun así se agota (muchos archivos pequeños = 3 peticiones cada uno), la
+// cola se pausa entera y se reanuda sola, ver rateLimit.ts.
 export const MAX_CONCURRENT_UPLOADS = 2
 
 const MAX_CHUNK_ATTEMPTS = 3
@@ -132,6 +134,11 @@ async function sendChunk(
  * corte de red momentáneo o un 429 puntual del rate limiter sin que haga
  * falta perder el archivo entero. Cancelación explícita (AbortController) se
  * propaga de inmediato, sin reintentar.
+ *
+ * Un 429 tampoco se reintenta aquí: el backoff de 0.5-2s no sirve contra un
+ * cupo que tarda ~60s en reponerse y solo malgastaría los intentos. Se
+ * propaga de inmediato para que `withRateLimitRetry` (rateLimit.ts) pause toda
+ * la cola y vuelva a lanzar el chunk cuando el cupo se haya repuesto.
  */
 export async function uploadChunkWithRetry(
   sessionId: string,
@@ -145,7 +152,8 @@ export async function uploadChunkWithRetry(
       await sendChunk(sessionId, chunkNumber, blob, signal, onProgress)
       return
     } catch (error) {
-      if (signal.aborted || attempt === MAX_CHUNK_ATTEMPTS) throw toApiError(error)
+      const apiError = toApiError(error)
+      if (signal.aborted || attempt === MAX_CHUNK_ATTEMPTS || isRateLimitError(apiError)) throw apiError
       onProgress(0) // el intento fallido no cuenta como progreso parcial
       await delay(backoffDelayMs(attempt))
     }

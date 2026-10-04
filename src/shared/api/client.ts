@@ -3,16 +3,26 @@ import axios, { AxiosError, type AxiosRequestConfig } from 'axios'
 import { env } from '@/shared/env'
 import type { ApiObjResponse } from '@/shared/types/api'
 
-import { getErrorMessage } from './errors'
+import { ApiErrorCodes, getErrorMessage } from './errors'
 
 /** Error tipado de la API: código del backend + mensaje ya mapeado (errors.ts). */
 export class ApiError extends Error {
   readonly errorCode: number | null
+  /** Estado HTTP de la respuesta, o `null` si nunca hubo respuesta (red caída, stall, timeout) o el error viene de unwrap. */
+  readonly httpStatus: number | null
+  /** Valor de la cabecera Retry-After en ms, si el navegador pudo leerla (ver parseRetryAfterMs). */
+  readonly retryAfterMs: number | null
 
-  constructor(errorCode: number | null, message: string) {
+  constructor(
+    errorCode: number | null,
+    message: string,
+    options: { httpStatus?: number | null; retryAfterMs?: number | null } = {},
+  ) {
     super(message)
     this.name = 'ApiError'
     this.errorCode = errorCode
+    this.httpStatus = options.httpStatus ?? null
+    this.retryAfterMs = options.retryAfterMs ?? null
   }
 }
 
@@ -82,14 +92,46 @@ function isEnvelope(data: unknown): data is ApiObjResponse<unknown> {
 }
 
 /**
+ * Retry-After en segundos (lo que envía el backend, RateLimiterExtensions.OnRejected)
+ * o como fecha HTTP. Devuelve ms, o `null` si no viene o no es interpretable.
+ *
+ * CLAUDE.md §5.4: en cross-origin el navegador solo expone esta cabecera si el
+ * backend la lista en Access-Control-Expose-Headers, y hoy no lo hace
+ * (CorsExtensions.cs) — por eso en la práctica suele ser `null` y quien la
+ * consume debe tener un valor por defecto. Se lee igualmente: costaría nada
+ * si el backend la expone algún día o si front y API comparten origen.
+ */
+function parseRetryAfterMs(raw: unknown): number | null {
+  if (typeof raw !== 'string' || raw.trim() === '') return null
+  const seconds = Number(raw)
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000)
+  const date = Date.parse(raw)
+  return Number.isNaN(date) ? null : Math.max(0, date - Date.now())
+}
+
+/**
  * Normaliza cualquier error (AxiosError con envelope en el body, ApiError ya
  * lanzado por unwrap, o error de red) a un ApiError con mensaje mapeado.
  */
 export function toApiError(error: unknown): ApiError {
   if (error instanceof ApiError) return error
+  const httpStatus = axios.isAxiosError(error) ? (error.response?.status ?? null) : null
+  const retryAfterMs = axios.isAxiosError(error)
+    ? parseRetryAfterMs((error.response?.headers as Record<string, unknown> | undefined)?.['retry-after'])
+    : null
+  const options = { httpStatus, retryAfterMs }
   if (axios.isAxiosError(error) && isEnvelope(error.response?.data)) {
     const envelope = error.response.data
-    return new ApiError(envelope.errorCode, getErrorMessage(envelope.errorCode, envelope.errorMessage))
+    return new ApiError(envelope.errorCode, getErrorMessage(envelope.errorCode, envelope.errorMessage), options)
   }
-  return new ApiError(null, getErrorMessage(null))
+  return new ApiError(null, getErrorMessage(null), options)
+}
+
+/**
+ * CLAUDE.md §5.1: el rate limiter del backend (429 + código 1009) es un fallo
+ * transitorio, no un rechazo de negocio. Se comprueba también el estado HTTP
+ * por si la respuesta la genera un proxy intermedio (Cloudflare) sin envelope.
+ */
+export function isRateLimitError(error: ApiError): boolean {
+  return error.errorCode === ApiErrorCodes.RateLimitExceeded || error.httpStatus === 429
 }
