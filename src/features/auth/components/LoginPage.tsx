@@ -66,7 +66,8 @@ export default function LoginPage() {
     <main className="flex min-h-screen bg-surface-alt">
       <LoginShowcase />
 
-      <section className="relative flex min-w-0 flex-1 flex-col overflow-hidden border-l border-border bg-bg px-6 py-10 sm:px-[54px]">
+      {/* Columna fija pegada a la derecha desde xl: el diseño de la izquierda se queda con el resto del ancho */}
+      <section className="relative flex min-w-0 flex-1 flex-col overflow-hidden border-l border-border bg-bg px-6 py-10 sm:px-[54px] xl:w-[680px] xl:flex-none">
         <div
           className="absolute right-0 top-0 h-[260px] w-[260px]"
           style={{ backgroundImage: 'linear-gradient(200deg, var(--surface), transparent 70%)' }}
@@ -93,13 +94,20 @@ export default function LoginPage() {
               ACCESO PRIVADO
             </span>
             <div>
-              <h2 className="text-[28px] font-bold tracking-[-0.6px] text-text-primary">Identifícate</h2>
-              <p className="mt-2 text-sm text-text-secondary">Solo las cuentas creadas en este servidor.</p>
+              <h2 className="text-[28px] font-bold tracking-[-0.6px] text-text-primary">
+                Identifícate
+              </h2>
+              <p className="mt-2 text-sm text-text-secondary">
+                Solo las cuentas creadas en este servidor.
+              </p>
             </div>
           </div>
 
           {infoMessage ? (
-            <p className="rounded-lg bg-surface px-3 py-2 text-sm text-text-secondary" role="status">
+            <p
+              className="rounded-lg bg-surface px-3 py-2 text-sm text-text-secondary"
+              role="status"
+            >
               {infoMessage}
             </p>
           ) : null}
@@ -119,7 +127,12 @@ export default function LoginPage() {
                       {/* El backend solo autentica por username, no por correo (§5.2): la etiqueta del diseño ("Usuario o correo") se queda en "Usuario" */}
                       <FormLabel className={FIELD_LABEL_CLASS}>Usuario</FormLabel>
                       <FormControl>
-                        <Input autoComplete="username" autoFocus className={FIELD_CLASS} {...field} />
+                        <Input
+                          autoComplete="username"
+                          autoFocus
+                          className={FIELD_CLASS}
+                          {...field}
+                        />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
