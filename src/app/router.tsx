@@ -1,6 +1,6 @@
-import { LayoutGrid, SearchX } from 'lucide-react'
+import { SearchX } from 'lucide-react'
 import { lazy, Suspense } from 'react'
-import { createBrowserRouter, Link, Navigate, Outlet } from 'react-router-dom'
+import { createBrowserRouter, Link, Outlet } from 'react-router-dom'
 
 import { EmptyState } from '@/shared/components/EmptyState'
 import { ErrorBoundary } from '@/shared/components/ErrorBoundary'
@@ -8,14 +8,13 @@ import { PageSkeleton } from '@/shared/components/PageSkeleton'
 import { Button } from '@/shared/components/ui/button'
 import { Toaster } from '@/shared/components/ui/sonner'
 import { AuthProvider } from '@/shared/hooks/useAuth'
-import { usePermissions } from '@/shared/hooks/usePermissions'
-import type { AppModule } from '@/shared/types/api'
 
 import { RequireAuth, RequireModule } from './guards'
 import { AppShell } from './layout/AppShell'
 
 // CLAUDE.md §3: lazy loading de páginas con React.lazy
 const LoginPage = lazy(() => import('@/features/auth/components/LoginPage'))
+const HomePage = lazy(() => import('@/features/home/HomePage'))
 const FilesPage = lazy(() => import('@/features/files/FilesPage'))
 const MonitorPage = lazy(() => import('@/features/system-monitor/MonitorPage'))
 const UsersPage = lazy(() => import('@/features/admin-users/UsersPage'))
@@ -23,33 +22,6 @@ const SystemLogsPage = lazy(() => import('@/features/admin-system-logs/SystemLog
 const AuditLogsPage = lazy(() => import('@/features/admin-audit-logs/AuditLogsPage'))
 const AccountSettingsPage = lazy(() => import('@/features/account/AccountSettingsPage'))
 const MyPermissionsPage = lazy(() => import('@/features/account/MyPermissionsPage'))
-
-// Orden de preferencia al entrar a "/": primer módulo con acceso
-const HOME_ORDER: Array<[AppModule, string]> = [
-  ['Files', '/files'],
-  ['SystemMonitor', '/monitor'],
-  ['UserManagement', '/admin/users'],
-  ['SystemLogs', '/admin/logs'],
-  ['AuditLogs', '/admin/audit-logs'],
-]
-
-function HomeRedirect() {
-  const { hasModule, isLoading } = usePermissions()
-  if (isLoading) return <PageSkeleton />
-
-  const target = HOME_ORDER.find(([module]) => hasModule(module))
-  if (target) return <Navigate to={target[1]} replace />
-
-  // CLAUDE.md §5.3/§6.9: usuario sin ningún módulo activo — informativo, sin
-  // botón (no puede activarse módulos a sí mismo)
-  return (
-    <EmptyState
-      icon={LayoutGrid}
-      title="Sin módulos activados"
-      description="Tu cuenta no tiene acceso a ningún módulo todavía. Un administrador debe activarlos por ti."
-    />
-  )
-}
 
 function NotFoundPage() {
   return (
@@ -99,7 +71,16 @@ export const router = createBrowserRouter([
           </RequireAuth>
         ),
         children: [
-          { path: '/', element: <HomeRedirect /> },
+          // Inicio (§6.18): pantalla de entrada, sin guard de módulo — cada tarjeta
+          // resuelve por su cuenta qué datos puede mostrar
+          {
+            path: '/',
+            element: (
+              <ErrorBoundary sectionLabel="el Inicio">
+                <HomePage />
+              </ErrorBoundary>
+            ),
+          },
           {
             path: '/files',
             element: (

@@ -62,6 +62,7 @@ src/
 │   │                             # types.ts, pipeline.ts (lógica pura + llamadas a la API,
 │   │                             # testeada en pipeline.test.ts) y UploadQueueContext.tsx
 │   │                             # (Provider + hook useUploadQueue, montado en AppShell)
+│   ├── home/                    # pantalla de Inicio, primera tras el login (§6.18)
 │   ├── account/                 # /me: perfil, cambiar contraseña, ajustes, ver mis permisos
 │   ├── admin-users/              # listar/ver/crear/borrar usuarios, editar límites de storage
 │   ├── admin-permissions/        # editar permisos por módulo de un usuario (reglas de auth distintas
@@ -310,6 +311,11 @@ Cada tabla cubre **todos** los tokens usados en el resto del documento para ambo
 | `--accent-tint-bg` | `#F3DDCC` | Fondo de estado activo/badge |
 | `--accent-tint-text` | `#8A3A1E` | Texto sobre `accent-tint-bg` |
 | `--text-on-accent` | `#FFF8F2` | Texto sobre botones rellenos de `--accent` (crema casi blanco) |
+| `--header-bg` | `#33302A` | Cabecera superior — oscura en AMBOS temas (§6.2) |
+| `--header-surface` | `#3E3A33` | Controles dentro de la cabecera (buscador, botón de sidebar) |
+| `--header-border` | `#4A453C` | Bordes dentro de la cabecera |
+| `--header-text` | `#F0EAE0` | Texto principal sobre la cabecera |
+| `--header-muted` | `#A79C8C` | Texto secundario/placeholder sobre la cabecera |
 
 **Oscuro:**
 | Token | Valor | Uso |
@@ -329,6 +335,11 @@ Cada tabla cubre **todos** los tokens usados en el resto del documento para ambo
 | `--accent-tint-bg` | `#4A3327` | Fondo de estado activo/badge |
 | `--accent-tint-text` | `#F0B594` | Texto sobre `accent-tint-bg` |
 | `--text-on-accent` | `#2A1B10` | Texto oscuro sobre botones con `--accent` (que en dark mode es un tono claro) |
+| `--header-bg` | `#1D1A18` | Cabecera superior — más oscura que `--bg` para que siga leyéndose como barra oscura |
+| `--header-surface` | `#272320` | Controles dentro de la cabecera |
+| `--header-border` | `#35302B` | Bordes dentro de la cabecera |
+| `--header-text` | `#F0EAE0` | Texto principal sobre la cabecera |
+| `--header-muted` | `#A79C8C` | Texto secundario/placeholder sobre la cabecera |
 
 **Semántico (excepción deliberada a "un único acento", ver §6.7) — mismo valor en ambos temas:**
 | Estado | Fondo | Texto |
@@ -344,9 +355,9 @@ Reglas generales: radio grande y consistente (`rounded-xl`/`2xl` en cards y moda
 
 ### 6.2 Distribución general
 
-- **Cabecera superior fija**, persistente en toda la app: a la izquierda, icono de colapsar/expandir sidebar + logo + nombre; a la derecha, avatar circular con chevron que despliega un menú (nombre + rol, luego Ajustes, Mis permisos, separador, Cerrar sesión — lista pensada para crecer con opciones futuras sin rediseñar).
+- **Cabecera superior fija**, persistente en toda la app y **oscura en ambos temas** (tokens `--header-*`, §6.1): a la izquierda, icono de colapsar/expandir sidebar + logo + nombre + buscador global (solo maqueta por ahora, §6.18); a la derecha, avatar circular con chevron que despliega un menú (nombre + rol, luego Ajustes, Mis permisos, separador, Cerrar sesión — lista pensada para crecer con opciones futuras sin rediseñar).
 - **Sidebar debajo de la cabecera**, nunca se oculta del todo: expandida (~190px, iconos + etiquetas) o contraída a un rail de solo iconos (~56px, icono activo con fondo tintado). El icono de la cabecera alterna entre ambos estados.
-- Navegación filtrada por `usePermissions().hasModule()` — nunca una lista fija. Sección "Administración" (etiqueta muted, mayúsculas pequeñas) agrupa los módulos de admin, separada de los módulos personales (Archivos, Monitor). **Por ahora, Administración muestra Usuarios, Registros y Auditoría** — Roles queda deliberadamente fuera del sidebar mientras esa página está en pausa de diseño (no construir su nav todavía). Cada entrada, sin excepción, solo aparece si `hasModule()` lo confirma para ese usuario (ver matiz de Admin en §7.3) — nunca una lista estática con todo visible.
+- Navegación filtrada por `usePermissions().hasModule()` — nunca una lista fija. Sección "Administración" (etiqueta muted, mayúsculas pequeñas) agrupa los módulos de admin, separada de los módulos personales (Inicio, Archivos, Monitor). **Inicio** (§6.18) es la única entrada que no depende de ningún módulo. **Por ahora, Administración muestra Usuarios, Registros y Auditoría** — Roles queda deliberadamente fuera del sidebar mientras esa página está en pausa de diseño (no construir su nav todavía). Cada entrada, sin excepción, solo aparece si `hasModule()` lo confirma para ese usuario (ver matiz de Admin en §7.3) — nunca una lista estática con todo visible.
 - Lo específico de cada pantalla (breadcrumb, buscador, botón de acción tipo "Subir") vive en la cabecera del propio panel de contenido, no en la cabecera global — no todas las pantallas lo necesitan.
 - **Estadísticas de almacenamiento en la parte inferior del sidebar** (barra de progreso + "X GB de Y GB"), visible solo cuando el sidebar está expandido — se oculta al contraer a rail de iconos, igual que las etiquetas de texto de la navegación. Ver §6.12 para el detalle de datos.
 
@@ -439,7 +450,7 @@ Cualquier mutation que cambie el espacio ocupado (subir archivo, borrar archivo,
 
 No estaba escrito en este documento hasta la auditoría de calidad de la Fase 7, pero ya es convención fija del proyecto: **`shared/components/ErrorBoundary.tsx`** (componente de clase — React no tiene equivalente en hooks) envuelve dos niveles:
 - **Uno de app entera**, en `app/App.tsx` alrededor de `<RouterProvider>` — última red de seguridad si algo revienta fuera de cualquier sección (ej. el propio `AuthProvider`).
-- **Uno por página de nivel superior**, en `app/router.tsx`, envolviendo el componente de cada ruta con un `sectionLabel` descriptivo (`"el explorador de archivos"`, `"el Monitor del sistema"`, `"Usuarios"`, `"Registros"`, `"Auditoría"`, `"Ajustes de cuenta"`, `"Mis permisos"`) — así un fallo de render en una pantalla no tira las demás; `AppShell` (cabecera + sidebar) sigue intacto y navegable alrededor del fallback, el usuario no queda atrapado.
+- **Uno por página de nivel superior**, en `app/router.tsx`, envolviendo el componente de cada ruta con un `sectionLabel` descriptivo (`"el Inicio"`, `"el explorador de archivos"`, `"el Monitor del sistema"`, `"Usuarios"`, `"Registros"`, `"Auditoría"`, `"Ajustes de cuenta"`, `"Mis permisos"`) — así un fallo de render en una pantalla no tira las demás; `AppShell` (cabecera + sidebar) sigue intacto y navegable alrededor del fallback, el usuario no queda atrapado.
 
 El botón "Reintentar" del fallback fuerza un remontaje real del subárbol (vía una `key` que se incrementa), no solo oculta el mensaje de error — si el problema era de estado local roto, un remontaje limpio tiene más opciones de arreglarlo que simplemente volver a renderizar el mismo estado. Sin servicio de reporting de errores todavía (§2: no hay CI/monitoring montado) — de momento el error se registra solo con `console.error`, sería el siguiente paso natural si el proyecto añade telemetría más adelante.
 
@@ -463,6 +474,16 @@ El botón "Reintentar" del fallback fuerza un remontaje real del subárbol (vía
 - **Píldora del servidor**: muestra el host de `VITE_API_URL`. El punto verde es decorativo: no hay comprobación de salud real todavía (`GET /healthCheck` existiría para hacerla).
 - **PENDIENTE (backend)** — son solo maqueta, sin lógica; al pulsarlos muestran el toast "Todavía no disponible" (la casilla Recordarme solo se marca/desmarca): **¿La has olvidado?** (no hay recuperación de contraseña), **Recordarme · 30 días** (el refresh token dura 7 días y no hay sesión "persistente" opcional, §5.2 — el texto "30 días" es del diseño, no un comportamiento real), **Entrar con clave de acceso** (passkeys) y **Otro servidor** (el front apunta a un único `VITE_API_URL`). Cuando el backend los soporte, retomar en `LoginPage.tsx` (los comentarios `PENDIENTE (CLAUDE.md §6.17)` marcan cada punto).
 - Sin cambios en la lógica: sigue siendo `loginSchema` + react-hook-form, mutation con botón deshabilitado y "Entrando…" (§11), error de credenciales como texto del formulario (no toast, §6.11), mostrar/ocultar contraseña con el icono de ojo compartido (§11 — el mockup mostraba el texto "Mostrar", se mantuvo el icono por coherencia con el resto de la app).
+
+### 6.18 Pantalla de Inicio — diseño "1c, lienzo hundido" (añadido tras el rediseño)
+
+`features/home/HomePage.tsx`, ruta `/` — **es la primera pantalla tras el login** (sustituye al antiguo `HomeRedirect`, que saltaba al primer módulo con acceso). No exige ningún módulo: cada tarjeta resuelve por su cuenta si el usuario puede ver sus datos y, si no, lo dice ("Módulo no activado") sin disparar peticiones que darían 403 (guard de módulo en el componente externo, hook en el interno). Un usuario sin ningún módulo con pantalla real sigue viendo el estado vacío informativo de §6.9. La raíz del explorador de archivos pasó de llamarse "Inicio" a "Archivos" en el breadcrumb, para no chocar con esta pantalla.
+
+- **Shell compartido con la pantalla** (afecta a toda la app, no solo a Inicio): cabecera superior **oscura en ambos temas** con tokens propios `--header-*` (§6.1), degradado radial "lienzo hundido" detrás del sidebar y del contenido (`AppShell`, hecho con `--card`/`--surface`/`--surface-alt`), sidebar transparente con la entrada activa **rellena de acento**, y al pie del sidebar el widget de almacenamiento (ahora como tarjeta) y un bloque de usuario con acceso a Ajustes. Las tarjetas "flotantes" usan `FloatCard` + `shadow-float` (`tailwind.config.ts`, sombra de dos capas derivada de `--text-primary`).
+- **Datos reales, hoy**: saludo y fecha (hora local del navegador, `greeting.ts`/`formatLongDate`), **Archivos** (`GET /statistics/storage`: nº de archivos, carpetas y tamaño total) y **Estado del servidor** (`GET /system-metrics/last-metric`: CPU, memoria y temperatura, con el mismo color por umbral que el Monitor, §6.13; solo con el módulo `SystemMonitor`; `MetricNotFound` = "Todavía no hay métricas"). **Atajos** reales: "Subir archivo" (abre el panel de subidas con destino = raíz) y "Explorar archivos".
+- **Sin datos falsos — lo que el diseño mostraba y NO existe en el backend**: las altas "esta semana" de Archivos (no hay histórico), las tarjetas de **Gastos** y **Cartera** (módulos fantasma, §5.3: se deja la tarjeta como base del layout con "—" y "Próximamente"), la **Actividad reciente** (no hay endpoint de actividad propia: el log de auditoría es solo para el módulo `AuditLogs` y global; se deja el hueco con un aviso y sin enlace "Ver todo"), los **días sin reiniciar** del servidor (el backend no expone uptime; en su lugar, enlace "Ver monitor"), el **⌘K** del buscador (no hay atajo ni búsqueda global) y "Nueva carpeta en Documentos" (crear carpetas vive dentro del explorador; en su lugar "Explorar archivos").
+- **PENDIENTE (backend/otros módulos)** — maqueta sin lógica, con toast "Todavía no disponible": buscador global de la cabecera (`GET /files/search` existe pero no está integrado, §5.4), "Nuevo gasto" y "Ver cartera". Cada punto lleva un comentario `PENDIENTE (CLAUDE.md §6.18)`.
+- Mismas excepciones de colores y tipografía que el login (§6.17): solo tokens de §6.1, Inter y `font-mono` del sistema en lugar de Public Sans/JetBrains Mono.
 
 ## 7. Patrones de código
 

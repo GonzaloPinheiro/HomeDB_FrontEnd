@@ -17,7 +17,7 @@ export function StorageWidget() {
 
   if (usage.isPending) {
     return (
-      <div className="flex flex-col gap-2 rounded-lg bg-surface-alt p-3">
+      <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3">
         <Skeleton className="h-3 w-24" />
         <Skeleton className="h-2 w-full" />
       </div>
@@ -30,7 +30,7 @@ export function StorageWidget() {
   const limitBytes = limit.data?.limits.storageLimitBytes ?? null
 
   return (
-    <div className="flex flex-col gap-2 rounded-lg bg-surface-alt p-3">
+    <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3">
       <span className="text-xs font-medium text-text-secondary">Almacenamiento</span>
       {limitBytes !== null ? (
         <>

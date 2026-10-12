@@ -8,6 +8,12 @@ export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
     extend: {
+      // Tarjeta "flotante" de la pantalla de Inicio (§6.18): sombra suave de dos
+      // capas derivada de --text-primary, para que funcione en claro y oscuro
+      boxShadow: {
+        float:
+          '0 2px 3px color-mix(in srgb, var(--text-primary) 5%, transparent), 0 18px 32px -20px color-mix(in srgb, var(--text-primary) 40%, transparent)',
+      },
       colors: {
         bg: 'var(--bg)',
         surface: {
@@ -34,6 +40,14 @@ export default {
           DEFAULT: 'var(--accent)',
           'tint-bg': 'var(--accent-tint-bg)',
           'tint-text': 'var(--accent-tint-text)',
+        },
+        // Cabecera superior oscura en ambos temas (§6.1)
+        header: {
+          DEFAULT: 'var(--header-bg)',
+          surface: 'var(--header-surface)',
+          border: 'var(--header-border)',
+          text: 'var(--header-text)',
+          muted: 'var(--header-muted)',
         },
         warning: {
           bg: 'var(--warning-bg)',
