@@ -6,7 +6,7 @@ import type { ApiObjResponse } from '@/shared/types/api'
 import { folderSchema } from './types'
 import type { Crumb } from './types'
 
-export const ROOT_CRUMB: Crumb = { id: null, name: 'Inicio' }
+export const ROOT_CRUMB: Crumb = { id: null, name: 'Archivos' }
 
 // Clave propia (no filesKeys.contents): esto cachea METADATOS de una carpeta
 // suelta (id/nombre/padre), no el listado de su contenido.

@@ -34,7 +34,7 @@ import { MoveFileModal } from './MoveFileModal'
 import { RenameModal } from './RenameModal'
 import { SortableHeader } from './SortableHeader'
 
-const ROOT: Crumb = { id: null, name: 'Inicio' }
+const ROOT: Crumb = { id: null, name: 'Archivos' }
 
 // CLAUDE.md §6.5/§7.4: 'upload' ya no es un modal local — abre el panel
 // global (UploadQueueProvider, montado en AppShell) pasándole la carpeta

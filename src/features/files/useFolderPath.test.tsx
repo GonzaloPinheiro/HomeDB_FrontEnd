@@ -37,7 +37,7 @@ describe('resolveFolderPath (CLAUDE.md §5.5: breadcrumb con nombres reales en d
     const path = await resolveFolderPath(queryClient, 3)
 
     expect(path).toEqual([
-      { id: null, name: 'Inicio' },
+      { id: null, name: 'Archivos' },
       { id: 1, name: 'Documentos' },
       { id: 2, name: 'Facturas' },
       { id: 3, name: '2026' },
@@ -55,7 +55,7 @@ describe('resolveFolderPath (CLAUDE.md §5.5: breadcrumb con nombres reales en d
     const path = await resolveFolderPath(queryClient, 1)
 
     expect(path).toEqual([
-      { id: null, name: 'Inicio' },
+      { id: null, name: 'Archivos' },
       { id: 1, name: 'Documentos' },
     ])
   })
@@ -99,7 +99,7 @@ describe('useFolderPath', () => {
 
     await waitFor(() =>
       expect(result.current.data).toEqual([
-        { id: null, name: 'Inicio' },
+        { id: null, name: 'Archivos' },
         { id: 1, name: 'Documentos' },
         { id: 2, name: 'Facturas' },
         { id: 3, name: '2026' },

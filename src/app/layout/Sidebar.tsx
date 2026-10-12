@@ -1,24 +1,39 @@
-import { Activity, ClipboardList, Folder, ScrollText, Users, type LucideIcon } from 'lucide-react'
+import {
+  Activity,
+  ClipboardList,
+  Folder,
+  House,
+  ScrollText,
+  Users,
+  type LucideIcon,
+} from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 
 import { Skeleton } from '@/shared/components/ui/skeleton'
 import { usePermissions } from '@/shared/hooks/usePermissions'
 
-import { StorageWidget } from './StorageWidget'
 import { cn } from '@/shared/lib/utils'
+
+import { SidebarUser } from './SidebarUser'
+import { StorageWidget } from './StorageWidget'
 import type { AppModule } from '@/shared/types/api'
 
 type NavItem = {
   to: string
   label: string
   icon: LucideIcon
-  module: AppModule
+  /** Sin módulo = visible para cualquier usuario con sesión (ej. Inicio). */
+  module?: AppModule
+  /** NavLink `end`: "/" no debe quedar activo en todas las rutas hijas. */
+  end?: boolean
 }
 
 // CLAUDE.md §6.2: módulos personales arriba, sección "Administración" aparte.
 // Roles queda fuera del sidebar mientras está en pausa de diseño (§6.6b).
 // Expenses/Investments/RemoteScripts son módulos fantasma (§5.3): sin nav.
+// "Inicio" (§6.18) es la pantalla de entrada: no exige ningún módulo.
 const PERSONAL_ITEMS: NavItem[] = [
+  { to: '/', label: 'Inicio', icon: House, end: true },
   { to: '/files', label: 'Archivos', icon: Folder, module: 'Files' },
   { to: '/monitor', label: 'Monitor', icon: Activity, module: 'SystemMonitor' },
 ]
@@ -34,13 +49,14 @@ function SidebarLink({ item, collapsed }: { item: NavItem; collapsed: boolean })
   return (
     <NavLink
       to={item.to}
+      end={item.end}
       title={collapsed ? item.label : undefined}
       className={({ isActive }) =>
         cn(
           'flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
           collapsed && 'justify-center px-0',
           isActive
-            ? 'bg-accent-tint-bg font-medium text-accent-tint-text'
+            ? 'bg-accent font-semibold text-text-on-accent'
             : 'text-text-secondary hover:bg-surface-alt hover:text-text-primary',
         )
       }
@@ -57,13 +73,13 @@ function SidebarLink({ item, collapsed }: { item: NavItem; collapsed: boolean })
 export function Sidebar({ collapsed }: { collapsed: boolean }) {
   const { hasModule, isLoading } = usePermissions()
 
-  const personal = PERSONAL_ITEMS.filter((item) => hasModule(item.module))
-  const admin = ADMIN_ITEMS.filter((item) => hasModule(item.module))
+  const personal = PERSONAL_ITEMS.filter((item) => !item.module || hasModule(item.module))
+  const admin = ADMIN_ITEMS.filter((item) => !item.module || hasModule(item.module))
 
   return (
     <aside
       className={cn(
-        'flex shrink-0 flex-col border-r border-border bg-surface p-2 transition-[width] duration-200',
+        'flex shrink-0 flex-col gap-3 border-r border-border p-2 transition-[width] duration-200',
         collapsed ? 'w-14' : 'w-[190px]',
       )}
     >
@@ -99,6 +115,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
       {/* CLAUDE.md §6.12/§6.2: widget de almacenamiento solo con el sidebar
           expandido — se oculta al contraer a rail, igual que las etiquetas */}
       {!collapsed && <StorageWidget />}
+      {!collapsed && <SidebarUser />}
     </aside>
   )
 }

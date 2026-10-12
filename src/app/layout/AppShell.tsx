@@ -33,9 +33,10 @@ export function AppShell() {
     <UploadQueueProvider>
       <div className="flex h-screen flex-col bg-bg">
         <TopHeader onToggleSidebar={toggleSidebar} />
-        <div className="flex min-h-0 flex-1">
+        {/* §6.18: "lienzo hundido" — degradado radial sobre el que flotan sidebar y tarjetas */}
+        <div className="flex min-h-0 flex-1 bg-[radial-gradient(1100px_520px_at_78%_-12%,var(--card)_0%,var(--surface)_58%,var(--surface-alt)_100%)]">
           <Sidebar collapsed={collapsed} />
-          <main className="min-w-0 flex-1 overflow-y-auto">
+          <main className="min-w-0 flex-1 overflow-y-auto shadow-[inset_6px_0_14px_-12px_color-mix(in_srgb,var(--text-primary)_55%,transparent)]">
             <Suspense fallback={<PageSkeleton />}>
               <Outlet />
             </Suspense>

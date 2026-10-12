@@ -24,6 +24,12 @@
   --accent-tint-bg: #f3ddcc;
   --accent-tint-text: #8a3a1e;
   --text-on-accent: #fff8f2;
+  /* Cabecera superior oscura (§6.1, Fase Inicio) */
+  --header-bg: #33302a;
+  --header-surface: #3e3a33;
+  --header-border: #4a453c;
+  --header-text: #f0eae0;
+  --header-muted: #a79c8c;
 
   /* Semántico (§6.1): deliberadamente el mismo valor en ambos temas */
   --warning-bg: #fbefd7;
@@ -51,6 +57,11 @@
   --accent-tint-bg: #4a3327;
   --accent-tint-text: #f0b594;
   --text-on-accent: #2a1b10;
+  --header-bg: #1d1a18;
+  --header-surface: #272320;
+  --header-border: #35302b;
+  --header-text: #f0eae0;
+  --header-muted: #a79c8c;
 }
 
 @layer base {

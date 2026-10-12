@@ -65,3 +65,19 @@ export function formatShortDateTime(iso: string, now: Date = new Date()): string
   const formatter = date.getFullYear() === now.getFullYear() ? DAY_MONTH_TIME : DAY_MONTH_YEAR_TIME
   return formatter.format(date).replace(/\./g, '')
 }
+
+const LONG_DATE = new Intl.DateTimeFormat('es-ES', {
+  weekday: 'long',
+  day: 'numeric',
+  month: 'long',
+})
+
+/**
+ * Date -> fecha larga con el día de la semana, para la cabecera de Inicio
+ * (§6.18): "Martes, 25 de agosto". Recibe un `Date` (no un ISO del backend):
+ * es siempre "hoy" en la zona horaria del navegador.
+ */
+export function formatLongDate(date: Date): string {
+  const text = LONG_DATE.format(date)
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
