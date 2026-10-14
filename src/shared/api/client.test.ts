@@ -1,9 +1,9 @@
-import { AxiosError } from 'axios'
-import { describe, expect, it } from 'vitest'
+import { AxiosError, type AxiosAdapter, type InternalAxiosRequestConfig } from 'axios'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { ApiObjResponse } from '@/shared/types/api'
 
-import { ApiError, isRateLimitError, toApiError, unwrap } from './client'
+import { ApiError, api, isRateLimitError, setOnSessionExpired, shouldRetryQuery, toApiError, unwrap } from './client'
 import { ApiErrorCodes, getErrorMessage } from './errors'
 
 function envelope<T>(partial: Partial<ApiObjResponse<T>>): ApiObjResponse<T> {
@@ -91,5 +91,82 @@ describe('rate limit (429)', () => {
 
   it('un error de red sin respuesta no es rate limit', () => {
     expect(isRateLimitError(toApiError(new AxiosError('Network Error')))).toBe(false)
+  })
+})
+
+describe('shouldRetryQuery', () => {
+  function httpError(status: number) {
+    const error = new AxiosError(`status ${status}`)
+    error.response = { status } as never
+    return error
+  }
+
+  it('no reintenta respuestas 4xx (403, 404, 429...)', () => {
+    for (const status of [400, 403, 404, 429]) {
+      expect(shouldRetryQuery(0, httpError(status))).toBe(false)
+    }
+  })
+
+  it('reintenta fallos transitorios (red caída, 5xx) hasta 3 veces', () => {
+    expect(shouldRetryQuery(0, new AxiosError('Network Error'))).toBe(true)
+    expect(shouldRetryQuery(2, httpError(503))).toBe(true)
+    expect(shouldRetryQuery(3, httpError(503))).toBe(false)
+  })
+})
+
+describe('interceptor de 401 (CLAUDE.md §5.2)', () => {
+  const originalAdapter = api.defaults.adapter
+
+  afterEach(() => {
+    api.defaults.adapter = originalAdapter
+    setOnSessionExpired(null)
+  })
+
+  function respond(config: InternalAxiosRequestConfig, status: number, data: unknown = {}) {
+    const response = { data, status, statusText: '', headers: {}, config }
+    if (status >= 400) throw new AxiosError(`status ${status}`, undefined, config, null, response)
+    return response
+  }
+
+  // Simula un backend con access token caducado hasta que se llama a refreshToken
+  function installBackend(options: { refreshFails?: boolean; dataStatus?: number } = {}) {
+    let refreshed = false
+    const refreshCalls = vi.fn()
+    const adapter: AxiosAdapter = async (config) => {
+      if (config.url?.includes('/auth/refreshToken')) {
+        refreshCalls()
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        if (options.refreshFails) return respond(config, 401)
+        refreshed = true
+        return respond(config, 200)
+      }
+      if (!refreshed) return respond(config, 401)
+      return respond(config, options.dataStatus ?? 200, { ok: true })
+    }
+    api.defaults.adapter = adapter
+    return { refreshCalls }
+  }
+
+  it('varias peticiones 401 simultáneas comparten UN solo refresh (el refresh token rota)', async () => {
+    const { refreshCalls } = installBackend()
+    const results = await Promise.all([api.get('/a'), api.get('/b'), api.get('/c')])
+    expect(results.every((r) => r.status === 200)).toBe(true)
+    expect(refreshCalls).toHaveBeenCalledTimes(1)
+  })
+
+  it('si el refresh falla, expira la sesión local', async () => {
+    installBackend({ refreshFails: true })
+    const onExpired = vi.fn()
+    setOnSessionExpired(onExpired)
+    await expect(api.get('/a')).rejects.toBeInstanceOf(AxiosError)
+    expect(onExpired).toHaveBeenCalledTimes(1)
+  })
+
+  it('si el refresh va bien pero la petición reintentada falla por otro motivo, NO expira la sesión', async () => {
+    installBackend({ dataStatus: 403 })
+    const onExpired = vi.fn()
+    setOnSessionExpired(onExpired)
+    await expect(api.get('/a')).rejects.toMatchObject({ response: { status: 403 } })
+    expect(onExpired).not.toHaveBeenCalled()
   })
 })

@@ -79,7 +79,10 @@ export function SystemMonitorDashboard() {
     return <MonitorSkeleton />
   }
 
-  if (last.isError) {
+  // `data === undefined` y no `isError`: un refetch fallido (corte puntual en el
+  // sondeo de 60s) deja status "error" con el último dato aún disponible, y no
+  // debe sustituir todo el panel por el estado vacío.
+  if (last.data === undefined) {
     return (
       <div className="p-4 md:p-6">
         <EmptyState

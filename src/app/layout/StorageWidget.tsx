@@ -4,16 +4,13 @@ import { Skeleton } from '@/shared/components/ui/skeleton'
 import { formatBytes } from '@/shared/lib/formatBytes'
 import { usePermissions } from '@/shared/hooks/usePermissions'
 
-// CLAUDE.md §6.12: barra de progreso + "X GB de Y GB" al pie del sidebar
-// expandido. Dos queries independientes (§7.8): uso (statistics/storage) y
-// límite (settings-overview) — el límite nunca se invalida desde mutations.
-export function StorageWidget() {
-  const { hasModule } = usePermissions()
+// Contenido con los hooks de datos. Va en un componente interno porque los
+// hooks no se pueden llamar condicionalmente: el guard de módulo vive en el
+// externo para que, sin el módulo Files, ni siquiera se dispare la petición
+// (daría 403, §5.3). Mismo patrón que las tarjetas de Inicio (§6.18).
+function StorageWidgetContent() {
   const usage = useStorageUsage()
   const limit = useStorageLimit()
-
-  // Los endpoints de uso exigen el módulo Files — sin él, no hay widget
-  if (!hasModule('Files')) return null
 
   if (usage.isPending) {
     return (
@@ -23,7 +20,9 @@ export function StorageWidget() {
       </div>
     )
   }
-  if (usage.isError) return null
+  // Sin datos (error en la primera carga): sin widget. Si ya había datos y solo
+  // falla un refetch, se sigue mostrando el último valor conocido.
+  if (usage.data === undefined) return null
 
   const usedBytes = usage.data.totalSizeBytes
   // §5.5: el límite puede llegar null (sin resolver) — solo el uso, sin "de X"
@@ -48,4 +47,13 @@ export function StorageWidget() {
       )}
     </div>
   )
+}
+
+// CLAUDE.md §6.12: barra de progreso + "X GB de Y GB" al pie del sidebar
+// expandido. Dos queries independientes (§7.8): uso (statistics/storage) y
+// límite (settings-overview) — el límite nunca se invalida desde mutations.
+export function StorageWidget() {
+  const { hasModule } = usePermissions()
+  if (!hasModule('Files')) return null
+  return <StorageWidgetContent />
 }

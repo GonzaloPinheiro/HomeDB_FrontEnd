@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query'
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { z } from 'zod'
@@ -41,6 +42,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [claims, setClaims] = useState<AuthClaims | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
 
   const applyToken = useCallback((accessToken: string) => {
     setClaims(decodeJwtClaims(accessToken))
@@ -48,7 +50,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const clearSession = useCallback(() => {
     setClaims(null)
-  }, [])
+    // La caché de TanStack Query es por pestaña, no por usuario: sin vaciarla,
+    // quien inicie sesión a continuación vería al instante los permisos y datos
+    // en caché (staleTime de 5 min en permisos) de la sesión anterior.
+    queryClient.clear()
+  }, [queryClient])
 
   // Restauración de sesión al montar: la cookie RefreshToken viaja sola. Fallar
   // aquí es lo normal sin sesión previa — sin toast de error.

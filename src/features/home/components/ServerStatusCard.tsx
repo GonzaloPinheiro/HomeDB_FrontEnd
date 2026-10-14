@@ -78,7 +78,8 @@ function ServerStatusContent() {
     )
   }
 
-  if (metric.isError) {
+  // Sin dato alguno (no `isError`): un refetch fallido conserva el último valor.
+  if (metric.data === undefined) {
     // §5.4: 404 MetricNotFound = instalación nueva sin ninguna muestra todavía
     const noDataYet = toApiError(metric.error).errorCode === ApiErrorCodes.MetricNotFound
     return (

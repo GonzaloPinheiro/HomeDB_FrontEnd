@@ -15,7 +15,7 @@ import {
   uploadChunkWithRetry,
 } from './pipeline'
 import { RateLimitGate, withRateLimitRetry } from './rateLimit'
-import type { UploadQueueEntry, UploadTarget } from './types'
+import type { ChunkStatus, UploadQueueEntry, UploadTarget } from './types'
 
 type UploadQueueContextValue = {
   entries: UploadQueueEntry[]
@@ -68,10 +68,22 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
     setEntries((current) => current.map((entry) => (entry.id === id ? { ...entry, ...patch } : entry)))
   }, [])
 
-  const setChunkStatus = useCallback((id: string, chunkIndex: number, status: UploadQueueEntry['chunks'][number]) => {
+  const setChunkStatus = useCallback((id: string, chunkIndex: number, status: ChunkStatus) => {
     setEntries((current) =>
       current.map((entry) =>
         entry.id === id ? { ...entry, chunks: entry.chunks.map((c, i) => (i === chunkIndex ? status : c)) } : entry,
+      ),
+    )
+  }, [])
+
+  // Los fragmentos en 'uploading' de una entrada (a lo sumo uno: van secuenciales)
+  // pasan al estado final que corresponda cuando la subida se corta.
+  const settleInFlightChunks = useCallback((id: string, status: ChunkStatus) => {
+    setEntries((current) =>
+      current.map((entry) =>
+        entry.id === id
+          ? { ...entry, chunks: entry.chunks.map((chunk) => (chunk === 'uploading' ? status : chunk)) }
+          : entry,
       ),
     )
   }, [])
@@ -120,6 +132,10 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
         }
 
         let doneChunkCount = alreadyReceived.length
+        // axios emite onUploadProgress muy a menudo; cada patchEntry re-renderiza
+        // a todos los consumidores del Context (modal, bandeja) y relanza el
+        // planificador. El % ya viene redondeado, así que solo se parchea si cambia.
+        let lastProgress = -1
         for (let chunkNumber = 1; chunkNumber <= plan.totalChunks; chunkNumber++) {
           if (alreadyReceived.includes(chunkNumber)) continue
 
@@ -129,17 +145,17 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
 
           await limited(() =>
             uploadChunkWithRetry(sessionId, chunkNumber, blob, controller.signal, (loadedBytes) => {
-              patchEntry(entry.id, {
-                progress: aggregateProgress(plan.chunkSizes, doneChunkCount, loadedBytes, entry.file.size),
-              })
+              const progress = aggregateProgress(plan.chunkSizes, doneChunkCount, loadedBytes, entry.file.size)
+              if (progress === lastProgress) return
+              lastProgress = progress
+              patchEntry(entry.id, { progress })
             }),
           )
 
           doneChunkCount += 1
           setChunkStatus(entry.id, chunkNumber - 1, 'done')
-          patchEntry(entry.id, {
-            progress: aggregateProgress(plan.chunkSizes, doneChunkCount, 0, entry.file.size),
-          })
+          lastProgress = aggregateProgress(plan.chunkSizes, doneChunkCount, 0, entry.file.size)
+          patchEntry(entry.id, { progress: lastProgress })
         }
 
         await limited(() => completeUploadSession(sessionId, controller.signal))
@@ -148,8 +164,11 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
         void queryClient.invalidateQueries({ queryKey: filesKeys.storageUsage })
       } catch (error) {
         if (controller.signal.aborted) {
+          settleInFlightChunks(entry.id, 'pending')
           patchEntry(entry.id, { status: 'cancelled' })
         } else {
+          // Sin esto el fragmento que falló se quedaría "subiendo" (pulsando) para siempre en la tira de §6.4.
+          settleInFlightChunks(entry.id, 'error')
           const apiError = toApiError(error)
           // errorCode null = nunca llegó una respuesta real del backend (red
           // caída, stall, timeout) — es justo el caso que reintenta solo el
@@ -163,7 +182,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
         controllersRef.current.delete(entry.id)
       }
     },
-    [patchEntry, queryClient, rateLimitGate, setChunkStatus],
+    [patchEntry, queryClient, rateLimitGate, setChunkStatus, settleInFlightChunks],
   )
 
   // Limpia el aviso de pausa al llegar su instante. Comparar contra el valor

@@ -15,7 +15,11 @@ export function CopyButton({ value, className }: CopyButtonProps) {
   const [copied, setCopied] = useState(false)
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(value)
+    try {
+      await navigator.clipboard.writeText(value)
+    } catch {
+      return // sin permiso o contexto no seguro: no se anuncia un "Copiado" falso
+    }
     setCopied(true)
     setTimeout(() => setCopied(false), 1500)
   }

@@ -142,6 +142,8 @@ type ApiObjResponse<T> = {
 
 `ApiError` (`shared/api/client.ts`) lleva además `httpStatus` y `retryAfterMs` (ambos `null` si no hubo respuesta / cabecera legible) y `isRateLimitError()` para reconocer un 429 por código 1009 o por estado HTTP — ver §7.4 para el único consumidor hoy (la cola de subidas).
 
+**Reintentos de queries**: el `QueryClient` (`app/App.tsx`) usa `shouldRetryQuery` (`client.ts`) — un 4xx (403, 404, 429…) no se reintenta, solo red caída y 5xx (máx. 3). Reintentar un 429 gastaría más cupo del rate limiter global.
+
 Patrón: cada mutation/query captura el error, lo pasa por `getErrorMessage(errorCode)` de `shared/api/errors.ts`, y se muestra con un toast de sonner (ver §6.8). Los toasts de error usan siempre este mensaje mapeado cuando el código es conocido, nunca un genérico si hay uno específico disponible.
 
 ### 5.2 Autenticación y sesión — el front web usa cookies, no headers manuales
@@ -151,7 +153,8 @@ Patrón: cada mutation/query captura el error, lo pasa por `getErrorMessage(erro
 - El `AccessToken` del body **se decodifica solo para leer claims** (`userId`, `username`, rol) y pintar la UI (ej. mostrar el menú de Admin) — nunca se usa para autenticar peticiones, ni se persiste en `localStorage`, solo vive en memoria (contexto de React).
 - El `RefreshToken` del body **se ignora para almacenamiento** — la cookie httpOnly es la única fuente de verdad, el front nunca la lee ni la guarda.
 - El backend también acepta el header `Authorization: Bearer` (para Postman o una futura app nativa fuera de este proyecto) — **el front web no usa esa vía**, funciona siempre con cookies.
-- Interceptor de axios: en un 401 que no venga de login/refresh, intenta refrescar una vez (la cookie viaja sola), reintenta la request original; si el refresh falla, limpia el estado local de React y navega a `/login` **usando el router, no `window.location.href`**.
+- Interceptor de axios: en un 401 que no venga de login/refresh, intenta refrescar una vez (la cookie viaja sola), reintenta la request original; si el refresh falla, limpia el estado local de React y navega a `/login` **usando el router, no `window.location.href`**. **El refresh es de una sola vuelta** (`refreshSession`, `client.ts`): varias requests con 401 a la vez comparten la misma promesa, porque el refresh token rota y un segundo refresh con la cookie ya rotada fallaría, expulsando al usuario sin motivo. Si el refresh va bien pero la request reintentada falla por otra causa (403, 500…), eso es un error normal de esa request y **no** expira la sesión.
+- **Cerrar o expirar la sesión vacía la caché de TanStack Query** (`queryClient.clear()` en `clearSession`, `useAuth`): la caché es por pestaña, no por usuario, y sin vaciarla el siguiente login vería permisos y datos del anterior.
 - Access token expira en **30 minutos**. Refresh token en **7 días**, con rotación.
 - `PUT /api/auth/changePassword` revoca todos los refresh tokens del usuario. Tras un cambio de contraseña con éxito, forzar logout y redirigir a login con un mensaje explicativo.
 - `POST /api/auth/logout` responde 200 aunque el token ya estuviera revocado o no existiera — no lo trates como error, simplemente limpia el estado local y navega a login.
@@ -437,7 +440,8 @@ Cualquier mutation que cambie el espacio ocupado (subir archivo, borrar archivo,
 - **Para CPU/Memoria, ese mismo cuadro lateral queda reservado** con un texto tipo "En desarrollo" — espacio preparado para cuando la API exponga más datos (modelo de CPU, tipo de memoria, etc.), no un hueco vacío sin explicación.
 - **Para Disco, el cuadro lateral es el panel de Backups diarios** (`features/system-monitor/backups/`, ver §5.4): insignia del estado del último registro, fecha y tamaño del último backup correcto, botón **"Forzar backup"** y un historial desplazable con estado, fecha, tamaño/duración y — si falló — el error crudo acotado a 2 líneas (completo en el tooltip). En escritorio tiene altura fija de 292px (la del skeleton del Monitor) con el scroll dentro de la lista, para que el gráfico de al lado no se estire con el número de entradas. **Solo se monta para Admin** (el backend exige rol Admin además del módulo, §5.3); un `User` con el módulo ve un aviso informativo y no se dispara ninguna petición. Mientras hay un backup en curso (visto en el historial, o una ejecución manual en vuelo) el panel sondea cada 5s en vez de cada 60s. El botón **Refrescar** de la cabecera también invalida el historial de backups.
 - **Chips de rango**: 1h / 24h / 7d / 30d — nunca un selector de fechas libre, para no chocar con que el backend no limita `/system-metrics/history` por su cuenta (§5.4).
-- **Actualización cada 60s** (coincide con `SystemMetrics:SampleIntervalMinutes` del backend) vía `refetchInterval` de TanStack Query, **más un botón manual de refrescar** — las dos cosas a la vez, no una u otra.
+- **Actualización cada 60s** (coincide con `SystemMetrics:SampleIntervalMinutes` del backend) vía `refetchInterval` de TanStack Query, **más un botón manual de refrescar** — las dos cosas a la vez, no una u otra. El historial usa el mismo intervalo de 60s en todos los rangos (decisión del usuario: que la ventana esté "viva"), aunque a 30d el backend devuelva ~43.000 filas sin agregar; por eso el gráfico se diezma en cliente (abajo).
+- **El gráfico se diezma en cliente** (`downsample.ts`, máx. 500 puntos, conservando el pico de cada tramo y los huecos `null`): recharts no debe recibir decenas de miles de puntos, sobre todo en móvil.
 - **Color por umbral, no permanente.** Las tarjetas y sus barras se quedan en el acento único mientras el valor es normal; solo cambian a un tono semántico de aviso (§6.1) al superar un umbral crítico (ej. >85% de uso, temperatura alta). Es una excepción de color puntual y funcional, igual de justificada que las insignias de log aunque Monitor no esté dentro de "Administración".
 - **`recharts`** para los gráficos, no SVG a mano — con línea de referencia discontinua marcando el umbral cuando aplique (ej. "Umbral 75°C").
 
@@ -488,6 +492,8 @@ El botón "Reintentar" del fallback fuerza un remontaje real del subárbol (vía
 ## 7. Patrones de código
 
 ### 7.1 Data fetching
+**Estado de error vs. dato disponible**: en TanStack Query v5 un refetch fallido deja `status: 'error'` con el último `data` aún presente. Las pantallas con sondeo o refetch al volver a la ventana (Monitor, tarjetas de Inicio, widget de almacenamiento, explorador de archivos, panel de backups) deciden el estado de error con `query.data === undefined`, **no** con `query.isError`, para que un fallo puntual no sustituya contenido válido por un estado vacío.
+
 Todo lo que sea estado de servidor pasa por TanStack Query. Un hook por recurso dentro de la feature correspondiente (ej. `features/files/api.ts` exporta `useFiles(folderId)`, `useMoveFile()`, etc.), nunca `fetch`/`axios` suelto dentro de un componente.
 
 ### 7.2 Sesión (`shared/hooks/useAuth`)
@@ -557,6 +563,8 @@ Cuando el backend implemente Expenses/Investments/RemoteScripts (o cualquier mó
 ## 9. Testing
 
 Vitest para lo que no es visual: `shared/api/client.ts` (parseo del envelope y mapeo de errores), hooks de datos de cada feature, la lógica de ordenación de la lista de archivos (carpetas primero, criterio activo), schemas de Zod. No hay tests de componentes visuales ni end-to-end por ahora.
+
+**Entorno de tests**: `vite.config.ts` fija `test.env.VITE_API_URL`, porque `shared/env.ts` valida esa variable al importarse y casi todos los módulos de red lo importan — los tests no dependen de que exista un `.env` local. `client.test.ts` cubre además el interceptor de 401 (refresh compartido, sin expulsión por errores ajenos) con un adaptador de axios falso.
 
 **`features/files/uploadQueue/pipeline.test.ts`** (Fase 8) es el caso de referencia de "lógica no visual" dentro de una pieza que por lo demás está muy pegada a red/estado: `computeChunkPlan`, `aggregateProgress` y `backoffDelayMs` (§7.4) son funciones puras, sin `api` ni React de por medio, así que se testean directo sin mockear axios ni renderizar nada — `rateLimit.test.ts` cubre `RateLimitGate`/`withRateLimitRetry` con fake timers (pausa compartida, reanudación, cancelación mientras espera, tope de pausas); el resto del pipeline (las llamadas HTTP y el propio `UploadQueueContext`) no tiene test todavía, igual que el resto de componentes visuales de la app.
 
