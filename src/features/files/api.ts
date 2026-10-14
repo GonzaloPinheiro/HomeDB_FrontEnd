@@ -265,7 +265,15 @@ export async function downloadFile(fileId: number, fallbackName: string): Promis
 
   const disposition = (response.headers['content-disposition'] as string | undefined) ?? ''
   const match = /filename\*?=(?:UTF-8''|")?([^";]+)/i.exec(disposition)
-  const fileName = match ? decodeURIComponent(match[1].replace(/"/g, '')) : fallbackName
+  let fileName = fallbackName
+  if (match) {
+    try {
+      fileName = decodeURIComponent(match[1].replace(/"/g, ''))
+    } catch {
+      // Un % mal formado en la cabecera lanzaría URIError con el archivo ya
+      // descargado: se conserva el nombre conocido.
+    }
+  }
 
   const url = URL.createObjectURL(response.data)
   const anchor = document.createElement('a')
@@ -274,5 +282,7 @@ export async function downloadFile(fileId: number, fallbackName: string): Promis
   document.body.appendChild(anchor)
   anchor.click()
   anchor.remove()
-  URL.revokeObjectURL(url)
+  // Revocar en el mismo tick puede cancelar la descarga en algunos navegadores;
+  // se difiere para que el navegador la haya iniciado ya.
+  setTimeout(() => URL.revokeObjectURL(url), 10_000)
 }

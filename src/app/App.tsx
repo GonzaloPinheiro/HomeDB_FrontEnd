@@ -1,11 +1,14 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { RouterProvider } from 'react-router-dom'
 
+import { shouldRetryQuery } from '@/shared/api/client'
 import { ErrorBoundary } from '@/shared/components/ErrorBoundary'
 
 import { router } from './router'
 
-const queryClient = new QueryClient()
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { retry: shouldRetryQuery } },
+})
 
 // CLAUDE.md §4: providers + router raíz. AuthProvider vive dentro del router
 // (RootLayout en router.tsx) porque usa useNavigate (§5.2).

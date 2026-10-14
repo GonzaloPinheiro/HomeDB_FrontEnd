@@ -51,7 +51,7 @@ function FilesStatCardContent() {
   const usage = useStorageUsage()
 
   if (usage.isPending) return <StatCardSkeleton label="Archivos" />
-  if (usage.isError)
+  if (usage.data === undefined)
     return <StatCard label="Archivos" value="—" caption="No se pudo cargar" muted />
 
   const { totalFiles, totalFolders, totalSizeBytes } = usage.data

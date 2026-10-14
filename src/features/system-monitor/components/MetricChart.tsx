@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import {
   Area,
   AreaChart,
@@ -9,6 +10,7 @@ import {
   YAxis,
 } from 'recharts'
 
+import { downsampleSeries } from '../downsample'
 import type { SystemMetrics } from '../types'
 
 type MetricDataKey = 'cpuUsagePercent' | 'memoryUsagePercent' | 'diskUsagePercent' | 'temperatureCelsius'
@@ -38,9 +40,12 @@ const TOOLTIP_FORMAT = new Intl.DateTimeFormat('es-ES', {
 // mientras no se fuerce `connectNulls`, así que basta con no coercionar el
 // valor a 0 en ningún punto de la preparación de datos.
 export function MetricChart({ data, dataKey, unit, threshold, fixedDomain }: MetricChartProps) {
+  // Los rangos largos llegan con decenas de miles de muestras (downsample.ts)
+  const points = useMemo(() => downsampleSeries(data, (m) => m[dataKey]), [data, dataKey])
+
   return (
     <ResponsiveContainer width="100%" height={260}>
-      <AreaChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+      <AreaChart data={points} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
         <defs>
           <linearGradient id="metricFill" x1="0" y1="0" x2="0" y2="1">
             <stop offset="5%" stopColor="var(--accent)" stopOpacity={0.3} />

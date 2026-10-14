@@ -40,7 +40,8 @@ export function BackupPanel() {
     )
   }
 
-  if (history.isError) {
+  // Sin dato alguno (no `isError`): el sondeo de 5s/60s no debe tirar el panel por un fallo puntual.
+  if (history.data === undefined) {
     return (
       <div className={`${PANEL_CLASS} items-center justify-center text-center`}>
         <p className="text-sm font-medium text-text-secondary">No se pudo cargar el historial</p>

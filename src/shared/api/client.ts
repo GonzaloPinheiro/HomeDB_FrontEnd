@@ -52,8 +52,24 @@ export function setOnSessionExpired(callback: (() => void) | null): void {
 
 type RetriableConfig = AxiosRequestConfig & { _retried?: boolean }
 
+// Refresh de una sola vuelta: el refresh token rota (§5.2), así que si varias
+// peticiones reciben 401 a la vez (típico al caducar el access token con
+// varias queries en vuelo) y cada una lanzara su propio refresh, la segunda
+// enviaría una cookie ya rotada y fallaría — expulsando al usuario sin motivo.
+// Todas comparten la misma promesa de refresh.
+let refreshInFlight: Promise<unknown> | null = null
+
+function refreshSession(): Promise<unknown> {
+  refreshInFlight ??= api
+    .post('/auth/refreshToken', { refreshToken: '' })
+    .finally(() => {
+      refreshInFlight = null
+    })
+  return refreshInFlight
+}
+
 // CLAUDE.md §5.2: en un 401 que no venga de login/refresh, refrescar UNA vez
-// (la cookie viaja sola) y reintentar la request original; si el refresh también
+// (la cookie viaja sola) y reintentar la request original; si el refresh
 // falla, expirar la sesión local.
 api.interceptors.response.use(
   (response) => response,
@@ -65,11 +81,15 @@ api.interceptors.response.use(
     if (error.response?.status === 401 && config && !isAuthEndpoint && !config._retried) {
       config._retried = true
       try {
-        await api.post('/auth/refreshToken', { refreshToken: '' })
-        return await api(config)
+        await refreshSession()
       } catch {
         onSessionExpired?.()
+        return Promise.reject(error)
       }
+      // Fuera del try: si la sesión SÍ se renovó y la petición reintentada falla
+      // por otro motivo (403, 500...), eso es un error normal de esa petición,
+      // no una sesión caducada.
+      return api(config)
     }
 
     return Promise.reject(error)
@@ -134,4 +154,17 @@ export function toApiError(error: unknown): ApiError {
  */
 export function isRateLimitError(error: ApiError): boolean {
   return error.errorCode === ApiErrorCodes.RateLimitExceeded || error.httpStatus === 429
+}
+
+/**
+ * Predicado `retry` por defecto de TanStack Query. Un 4xx (403 sin módulo, 404
+ * `MetricNotFound`, 429...) es una respuesta determinista del backend: repetirla
+ * solo retrasa unos segundos el estado de error/vacío y, con el 429, gasta más
+ * cupo del rate limiter global (§7.4). Solo se reintenta lo transitorio (red
+ * caída, 5xx), con el máximo por defecto de la librería (3).
+ */
+export function shouldRetryQuery(failureCount: number, error: unknown): boolean {
+  if (failureCount >= 3) return false
+  const status = axios.isAxiosError(error) ? error.response?.status : undefined
+  return !(status !== undefined && status >= 400 && status < 500)
 }

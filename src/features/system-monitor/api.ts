@@ -45,6 +45,16 @@ export function rangeToQuery(range: MetricRange, now: Date = new Date()): { from
 // solo en appsettings.Development.json de este repo).
 export const SAMPLE_INTERVAL_MS = 60_000
 
+// CLAUDE.md §6.13/§7.9: los rangos largos (7d/30d) devuelven decenas de miles de
+// filas (~43.000 a 30d) que además se validan con Zod en cada respuesta; una
+// muestra nueva por minuto no se aprecia en ese gráfico, así que se refrescan
+// menos a menudo. 1h y 24h siguen al ritmo de muestreo.
+const LONG_RANGE_REFETCH_MS = 5 * SAMPLE_INTERVAL_MS
+
+export function historyRefetchInterval(range: MetricRange): number {
+  return range === '7d' || range === '30d' ? LONG_RANGE_REFETCH_MS : SAMPLE_INTERVAL_MS
+}
+
 export const systemMonitorKeys = {
   lastMetric: ['system-monitor', 'last-metric'] as const,
   history: (range: MetricRange) => ['system-monitor', 'history', range] as const,
@@ -78,6 +88,6 @@ export function useMetricsHistory(range: MetricRange) {
       })
       return metricsHistorySchema.parse(unwrap(response.data))
     },
-    refetchInterval: SAMPLE_INTERVAL_MS,
+    refetchInterval: historyRefetchInterval(range),
   })
 }

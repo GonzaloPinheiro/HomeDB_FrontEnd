@@ -51,8 +51,10 @@ type DropTargetData = { type?: 'folder' | 'crumb'; folderId?: number | null; ind
 export function FileExplorerPage() {
   // La carpeta actual vive en la URL: sobrevive a un refresco y es compartible
   const [searchParams, setSearchParams] = useSearchParams()
-  const folderIdParam = searchParams.get('folderId')
-  const folderId = folderIdParam !== null ? Number(folderIdParam) : null
+  // Un ?folderId= manipulado a mano ("abc", "-3", "1.5") no es un id válido: se
+  // trata como raíz en vez de pedir /folders/NaN/subfolders al backend.
+  const folderIdParam = Number(searchParams.get('folderId'))
+  const folderId = Number.isInteger(folderIdParam) && folderIdParam > 0 ? folderIdParam : null
 
   const [trail, setTrail] = useState<Crumb[]>([ROOT])
   const [sortKey, setSortKey] = useState<SortKey>('name')
@@ -259,7 +261,7 @@ export function FileExplorerPage() {
       {/* Lista */}
       {contents.isPending ? (
         <FileListSkeleton />
-      ) : contents.isError ? (
+      ) : contents.data === undefined ? (
         <EmptyState
           icon={CircleAlert}
           title="No se pudo cargar la carpeta"
