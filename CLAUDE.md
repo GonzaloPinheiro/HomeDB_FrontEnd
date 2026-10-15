@@ -78,7 +78,7 @@ src/
 │   │   ├── client.ts             # instancia axios, interceptores, manejo del envelope ApiObjResponse<T>
 │   │   └── errors.ts              # mapa completo de ApiErrorCodes -> mensaje (ver §5.1)
 │   ├── components/                # Button, Input, Table, Pagination, Modal, EmptyState, Skeleton,
-│   │                               # PageHeader... (shadcn + a medida)
+│   │                               # PageHeader, FloatCard (tarjeta flotante de Inicio y Monitor, §6.18)... (shadcn + a medida)
 │   ├── hooks/                     # useAuth, usePermissions, useUploadFile, useDebounce, etc.
 │   ├── lib/                       # formatBytes, formatDate, cn(), etc.
 │   ├── types/                     # ApiObjResponse<T>, AppModule, tipos cross-feature
@@ -314,6 +314,7 @@ Cada tabla cubre **todos** los tokens usados en el resto del documento para ambo
 | `--accent-tint-bg` | `#F3DDCC` | Fondo de estado activo/badge |
 | `--accent-tint-text` | `#8A3A1E` | Texto sobre `accent-tint-bg` |
 | `--text-on-accent` | `#FFF8F2` | Texto sobre botones rellenos de `--accent` (crema casi blanco) |
+| `--row-hover` | `text-primary` al 7% (translúcido) | Sombreado de una fila de lista al pasar el ratón (§6.3, §6.6) |
 | `--header-bg` | `#33302A` | Cabecera superior — oscura en AMBOS temas (§6.2) |
 | `--header-surface` | `#3E3A33` | Controles dentro de la cabecera (buscador, botón de sidebar) |
 | `--header-border` | `#4A453C` | Bordes dentro de la cabecera |
@@ -338,6 +339,7 @@ Cada tabla cubre **todos** los tokens usados en el resto del documento para ambo
 | `--accent-tint-bg` | `#4A3327` | Fondo de estado activo/badge |
 | `--accent-tint-text` | `#F0B594` | Texto sobre `accent-tint-bg` |
 | `--text-on-accent` | `#2A1B10` | Texto oscuro sobre botones con `--accent` (que en dark mode es un tono claro) |
+| `--row-hover` | `text-primary` al 9% (translúcido) | Sombreado de una fila de lista al pasar el ratón (§6.3, §6.6) |
 | `--header-bg` | `#1D1A18` | Cabecera superior — más oscura que `--bg` para que siga leyéndose como barra oscura |
 | `--header-surface` | `#272320` | Controles dentro de la cabecera |
 | `--header-border` | `#35302B` | Bordes dentro de la cabecera |
@@ -354,6 +356,8 @@ Cada tabla cubre **todos** los tokens usados en el resto del documento para ambo
 
 `Positive` (verde apagado, a juego con el resto de la paleta) se añadió en la Fase 6 para el punto de estado del ventilador "en marcha" en Monitor (§6.13) — único uso hasta ahora, mismo criterio de "color con propósito" que Warning/Critical (§6.7) Segundo uso: la insignia "Correcto" de los backups (§6.13), con Critical para "Fallido" y un tono neutro para "En curso".
 
+**Hover de listas — `--row-hover` (clase `bg-row-hover`).** El sombreado de fila al pasar el ratón es un token translúcido, no `bg-surface-alt`: el lienzo hundido de `AppShell` (§6.18) es un degradado que termina en `--surface-alt` (claro) y en oscuro `--card` vale lo mismo que `--surface-alt`, así que ese color era invisible sobre el fondo de las listas. Un tinte semitransparente de `--text-primary` se distingue sobre cualquier fondo en ambos temas. Lo usan `TableRow` (Usuarios, Registros, Auditoría) y `FileRow` (Archivos); no uses `hover:bg-surface-alt` para filas de lista.
+
 Reglas generales: radio grande y consistente (`rounded-xl`/`2xl` en cards y modales, `rounded-lg` en botones/inputs), sombras casi imperceptibles (nunca duras ni gradientes), tipografía Inter con jerarquía por peso, espaciado generoso, animaciones Framer Motion cortas (150-250ms, `ease-out`, solo fade/slide/scale sutil — nunca rebote).
 
 ### 6.2 Distribución general
@@ -369,7 +373,7 @@ Reglas generales: radio grande y consistente (`rounded-xl`/`2xl` en cards y moda
 - **Lista única**, carpetas y archivos mezclados, diferenciados por icono — no tarjetas de carpeta separadas de una lista de archivos. Decisión tomada por mantenibilidad: una sola colección ordenable, un solo componente.
 - **Carpetas siempre primero**, sin importar el criterio de orden activo. Dentro de las carpetas, orden fijo por nombre (no tienen tamaño en bytes en el contrato actual, así que "Tamaño" no las reordena).
 - **Cabeceras de columna ordenables**: Nombre, Tamaño, Fecha — clic para ordenar, clic de nuevo para invertir, con flecha indicando dirección en la columna activa. Nombre y Fecha ordenan todo; Tamaño solo reordena archivos. No hay columna de orden por "Tipo" — el tipo se transmite solo con el icono. Orden hecho en cliente sobre lo ya cargado, sin parámetros de orden en el backend.
-- **Toda la fila de una carpeta es clicable para entrar** — sin flecha/chevron de afordancia adicional.
+- **Toda la fila de una carpeta es clicable para entrar** — sin flecha/chevron de afordancia adicional. Todas las filas (carpetas **y** archivos) se sombrean al pasar el ratón con `--row-hover` (§6.1); solo las carpetas llevan `cursor-pointer`, porque un archivo no se abre al hacer clic (se arrastra o usa su menú).
 - **Drag & drop estilo Explorador de Windows**: arrastrar un archivo sobre una fila de carpeta lo mueve dentro (usa `PATCH /files/{id}`, §5.4). Arrastrar un archivo sobre un segmento de la ruta (breadcrumb) lo mueve a esa carpeta ancestro; si se mantiene encima sin soltar (~800ms), navega automáticamente ahí. Implementado con `dnd-kit` (sensores de puntero, no HTML5 DnD nativo) para que funcione bien también en pantallas táctiles. Toda la mecánica visual (hover, resaltado, navegación al mantener encima) se construye igual independientemente de si el endpoint ya existe — ver el interruptor `FILE_MOVE_ENABLED` en §7.5.
 - **Breadcrumb**: a partir de ~4 niveles de profundidad, colapsa los intermedios en "…", dejando siempre visible el primero y los dos últimos. Los nombres se resuelven con `useFolderPath` (subiendo por `ParentFolderId` vía `GET /folders/{folderId}`, §5.4) cuando la carpeta actual no está ya en el trail de navegación normal (ej. tras un refresco de página o un enlace directo) — con un marcador genérico como fallback solo si esa resolución fallara, nunca como comportamiento normal.
 - **Buscador con alcance limitado a la carpeta actual, en cliente, por ahora.** `GET /files/search` ya existe en el backend (§5.4) pero no está integrado todavía — el filtro actual solo opera sobre lo ya cargado de la carpeta actual, con debounce (§11). Verificar la forma real del endpoint antes de sustituir este filtro local, no diseñarlo de memoria.
@@ -435,6 +439,7 @@ Cualquier mutation que cambie el espacio ocupado (subir archivo, borrar archivo,
 
 ### 6.13 Monitor del sistema
 
+- **Estilo: el de Inicio (§6.18).** Mismo padding de página, hueco de 22px entre bloques, cabecera con línea secundaria + título grande, y tarjetas `FloatCard` (`shared/components/FloatCard.tsx`, radio 14px + `shadow-float`) para las métricas, el gráfico y el cuadro lateral; las métricas usan la tipografía de las `StatCards` de Inicio (etiqueta `text-xs`, cifra de 26px en negrita, barra de 5px). La tarjeta seleccionada conserva borde y fondo de acento; el hover de las no seleccionadas oscurece el borde (no `bg-surface-alt`, invisible en oscuro, §6.1).
 - **Cuatro tarjetas superiores actúan como selector**, no solo como resumen: CPU, Memoria, Disco y Temperatura. La tarjeta activa se resalta (borde/fondo en acento); al hacer clic en otra, cambia el gráfico y el cuadro lateral de abajo.
 - **El ventilador vive dentro de la tarjeta de Temperatura**, no aparte: un punto de estado (verde en marcha / rojo si no) + rpm, en línea con el valor de temperatura. Al seleccionar esa tarjeta, el cuadro lateral junto al gráfico muestra el detalle completo del ventilador (estado, rpm, modo, PWM).
 - **Para CPU/Memoria, ese mismo cuadro lateral queda reservado** con un texto tipo "En desarrollo" — espacio preparado para cuando la API exponga más datos (modelo de CPU, tipo de memoria, etc.), no un hueco vacío sin explicación.
