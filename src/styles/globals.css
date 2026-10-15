@@ -24,6 +24,8 @@
   --accent-tint-bg: #f3ddcc;
   --accent-tint-text: #8a3a1e;
   --text-on-accent: #fff8f2;
+  /* Hover de listas (§6.1): sombreado de fila sobre cualquier fondo, también el degradado de AppShell */
+  --row-hover: color-mix(in srgb, var(--text-primary) 7%, transparent);
   /* Cabecera superior oscura (§6.1, Fase Inicio) */
   --header-bg: #33302a;
   --header-surface: #3e3a33;
@@ -57,6 +59,7 @@
   --accent-tint-bg: #4a3327;
   --accent-tint-text: #f0b594;
   --text-on-accent: #2a1b10;
+  --row-hover: color-mix(in srgb, var(--text-primary) 9%, transparent);
   --header-bg: #1d1a18;
   --header-surface: #272320;
   --header-border: #35302b;

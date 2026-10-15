@@ -7,7 +7,7 @@ import { formatBytes } from '@/shared/lib/formatBytes'
 import { formatInteger } from '@/shared/lib/formatNumber'
 import { cn } from '@/shared/lib/utils'
 
-import { FloatCard } from './FloatCard'
+import { FloatCard } from '@/shared/components/FloatCard'
 
 type StatCardProps = {
   label: string

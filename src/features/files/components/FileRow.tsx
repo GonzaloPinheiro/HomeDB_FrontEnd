@@ -110,11 +110,11 @@ export function FileRow({ item, onEnterFolder, onDownload, onRename, onMove, onD
         // touch-manipulation (no touch-none): conserva el scroll táctil de la
         // lista (§10) — en táctil, mover archivos tiene su alternativa en
         // "Mover a…" (§11)
-        'group flex touch-manipulation items-center gap-3 rounded-lg px-3 py-2.5 transition-colors',
-        isFolder &&
-          'cursor-pointer hover:bg-surface-alt focus-visible:bg-surface-alt focus-visible:outline-none',
+        'group flex touch-manipulation items-center gap-3 rounded-lg px-3 py-2.5 transition-colors hover:bg-row-hover',
+        // §6.1 (--row-hover): el sombreado se aplica a carpetas y archivos; solo las carpetas son clicables
+        isFolder && 'cursor-pointer focus-visible:bg-row-hover focus-visible:outline-none',
         // §6.3: resaltar la carpeta mientras un archivo se arrastra encima
-        isOver && 'bg-accent-tint-bg ring-1 ring-accent',
+        isOver && 'bg-accent-tint-bg ring-1 ring-accent hover:bg-accent-tint-bg',
         isDragging && 'opacity-40',
       )}
     >

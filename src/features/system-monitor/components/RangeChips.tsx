@@ -21,7 +21,7 @@ export function RangeChips({ value, onChange }: RangeChipsProps) {
             'rounded-md px-3 py-1 text-sm font-medium transition-colors',
             value === range
               ? 'bg-accent text-text-on-accent'
-              : 'text-text-secondary hover:bg-surface-alt hover:text-text-primary',
+              : 'text-text-secondary hover:bg-row-hover hover:text-text-primary',
           )}
         >
           {RANGE_LABELS[range]}

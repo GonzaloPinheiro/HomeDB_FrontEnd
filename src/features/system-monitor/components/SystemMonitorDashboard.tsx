@@ -4,6 +4,7 @@ import { useState } from 'react'
 
 import { toApiError } from '@/shared/api/client'
 import { EmptyState } from '@/shared/components/EmptyState'
+import { FloatCard } from '@/shared/components/FloatCard'
 import { Button } from '@/shared/components/ui/button'
 import { Skeleton } from '@/shared/components/ui/skeleton'
 import { formatBytes } from '@/shared/lib/formatBytes'
@@ -84,7 +85,7 @@ export function SystemMonitorDashboard() {
   // debe sustituir todo el panel por el estado vacío.
   if (last.data === undefined) {
     return (
-      <div className="p-4 md:p-6">
+      <div className="px-4 py-6 sm:px-8 sm:py-[26px]">
         <EmptyState
           icon={Activity}
           title="Sin datos todavía"
@@ -102,9 +103,13 @@ export function SystemMonitorDashboard() {
   const metric = last.data
 
   return (
-    <div className="flex min-h-full flex-col gap-4 p-4 md:p-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold text-text-primary">Monitor</h1>
+    // §6.13/§6.18: mismo ritmo y cabecera que Inicio (padding, hueco de 22px, título grande)
+    <div className="flex min-h-full flex-col gap-[22px] px-4 py-6 sm:px-8 sm:py-[26px]">
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <p className="mb-1.5 text-[13px] text-text-secondary">Estado del servidor</p>
+          <h1 className="text-2xl font-bold tracking-tight text-text-primary sm:text-[30px]">Monitor</h1>
+        </div>
         <Button
           variant="outline"
           onClick={refreshAll}
@@ -114,9 +119,9 @@ export function SystemMonitorDashboard() {
           <RefreshCw className={cn('h-4 w-4', (last.isFetching || history.isFetching) && 'animate-spin')} aria-hidden />
           Refrescar
         </Button>
-      </div>
+      </header>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         {(Object.keys(METRIC_LABEL) as MetricKey[]).map((key) => {
           const value = METRIC_VALUE[key](metric)
           return (
@@ -138,12 +143,12 @@ export function SystemMonitorDashboard() {
 
       {/* CLAUDE.md §10: flex-wrap por consistencia con el resto de cabeceras de pantalla — margen de seguridad a ~375px/zoom grande */}
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-sm font-medium text-text-secondary">{METRIC_LABEL[selected]}</h2>
+        <h2 className="text-[15px] font-semibold text-text-primary">{METRIC_LABEL[selected]}</h2>
         <RangeChips value={range} onChange={setRange} />
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_260px]">
-        <div className="rounded-xl border border-border bg-card p-4">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_260px]">
+        <FloatCard className="p-4">
           {history.isPending ? (
             <Skeleton className="h-[260px] w-full" />
           ) : history.isError ? (
@@ -159,7 +164,7 @@ export function SystemMonitorDashboard() {
               fixedDomain={selected !== 'temperature'}
             />
           )}
-        </div>
+        </FloatCard>
         <MetricSidePanel selected={selected} metric={metric} />
       </div>
     </div>
@@ -169,19 +174,22 @@ export function SystemMonitorDashboard() {
 // CLAUDE.md §6.10: skeleton con la forma del contenido real (tarjetas + gráfico)
 function MonitorSkeleton() {
   return (
-    <div className="flex min-h-full flex-col gap-4 p-4 md:p-6" aria-hidden>
-      <div className="flex items-center justify-between">
-        <Skeleton className="h-6 w-24" />
+    <div className="flex min-h-full flex-col gap-[22px] px-4 py-6 sm:px-8 sm:py-[26px]" aria-hidden>
+      <div className="flex items-end justify-between">
+        <div>
+          <Skeleton className="mb-2 h-4 w-32" />
+          <Skeleton className="h-8 w-28" />
+        </div>
         <Skeleton className="h-9 w-28" />
       </div>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         {Array.from({ length: 4 }).map((_, index) => (
-          <Skeleton key={index} className="h-28 rounded-xl" />
+          <Skeleton key={index} className="h-[142px] rounded-[14px]" />
         ))}
       </div>
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_260px]">
-        <Skeleton className="h-[292px] rounded-xl" />
-        <Skeleton className="h-[292px] rounded-xl" />
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_260px]">
+        <Skeleton className="h-[292px] rounded-[14px]" />
+        <Skeleton className="h-[292px] rounded-[14px]" />
       </div>
     </div>
   )
