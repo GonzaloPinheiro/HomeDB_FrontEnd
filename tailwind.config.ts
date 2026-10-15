@@ -41,6 +41,8 @@ export default {
           'tint-bg': 'var(--accent-tint-bg)',
           'tint-text': 'var(--accent-tint-text)',
         },
+        // Sombreado de fila al pasar el ratón (§6.1): translúcido, visible sobre el degradado de AppShell
+        'row-hover': 'var(--row-hover)',
         // Cabecera superior oscura en ambos temas (§6.1)
         header: {
           DEFAULT: 'var(--header-bg)',

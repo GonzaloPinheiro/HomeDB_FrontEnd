@@ -7,7 +7,7 @@ import { useUploadQueue } from '@/features/files/uploadQueue/UploadQueueContext'
 import { usePermissions } from '@/shared/hooks/usePermissions'
 import { cn } from '@/shared/lib/utils'
 
-import { FloatCard } from './FloatCard'
+import { FloatCard } from '@/shared/components/FloatCard'
 
 const TILE_CLASS =
   'flex min-h-[88px] flex-col justify-between gap-3 rounded-[9px] border border-border bg-surface p-[15px] text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring'

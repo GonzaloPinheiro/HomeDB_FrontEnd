@@ -2,6 +2,7 @@ import { DatabaseBackup, Loader2 } from 'lucide-react'
 import { useState } from 'react'
 
 import { toApiError } from '@/shared/api/client'
+import { FloatCard } from '@/shared/components/FloatCard'
 import { Button } from '@/shared/components/ui/button'
 import { Skeleton } from '@/shared/components/ui/skeleton'
 import { formatBytes } from '@/shared/lib/formatBytes'
@@ -17,7 +18,7 @@ import { TriggerBackupModal } from './TriggerBackupModal'
 // diarios. Altura fija en escritorio (la misma que el skeleton del Monitor,
 // 292px = gráfico + padding) con el historial desplazable por dentro: así la
 // fila del grid no crece con el número de entradas y el gráfico no se estira.
-const PANEL_CLASS = 'flex flex-col gap-3 rounded-xl border border-border bg-card p-4 lg:h-[292px]'
+const PANEL_CLASS = 'flex flex-col gap-3 p-4 lg:h-[292px]'
 
 /**
  * Solo se monta para un Admin: `BackupController` exige rol Admin ADEMÁS del
@@ -31,25 +32,25 @@ export function BackupPanel() {
 
   if (history.isPending) {
     return (
-      <div className={PANEL_CLASS} aria-hidden>
+      <FloatCard className={PANEL_CLASS} aria-hidden>
         <Skeleton className="h-5 w-32" />
         <Skeleton className="h-10 w-full" />
         <Skeleton className="h-9 w-full" />
         <Skeleton className="min-h-0 flex-1" />
-      </div>
+      </FloatCard>
     )
   }
 
   // Sin dato alguno (no `isError`): el sondeo de 5s/60s no debe tirar el panel por un fallo puntual.
   if (history.data === undefined) {
     return (
-      <div className={`${PANEL_CLASS} items-center justify-center text-center`}>
+      <FloatCard className={`${PANEL_CLASS} items-center justify-center text-center`}>
         <p className="text-sm font-medium text-text-secondary">No se pudo cargar el historial</p>
         <p className="text-xs text-text-muted">{toApiError(history.error).message}</p>
         <Button variant="outline" size="sm" onClick={() => void history.refetch()}>
           Reintentar
         </Button>
-      </div>
+      </FloatCard>
     )
   }
 
@@ -62,7 +63,7 @@ export function BackupPanel() {
   }
 
   return (
-    <div className={PANEL_CLASS}>
+    <FloatCard className={PANEL_CLASS}>
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-text-primary">Backups diarios</h3>
         {latest && <BackupStatusBadge status={latest.status} />}
@@ -102,6 +103,6 @@ export function BackupPanel() {
       </div>
 
       <TriggerBackupModal open={confirmOpen} onClose={() => setConfirmOpen(false)} onConfirm={confirm} />
-    </div>
+    </FloatCard>
   )
 }

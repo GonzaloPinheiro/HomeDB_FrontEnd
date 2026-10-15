@@ -42,16 +42,19 @@ export function MetricCard({
       onClick={onSelect}
       aria-pressed={selected}
       className={cn(
-        'flex flex-col gap-3 rounded-xl border p-4 text-left transition-colors',
-        selected ? 'border-accent bg-accent-tint-bg' : 'border-border bg-card hover:bg-surface-alt',
+        // §6.18: misma tarjeta flotante que Inicio (radio 14px + shadow-float); el hover
+        // de las no seleccionadas oscurece el borde — bg-surface-alt no se distingue de
+        // bg-card en oscuro (§6.1)
+        'flex flex-col gap-3 rounded-[14px] border p-5 text-left shadow-float transition-colors',
+        selected ? 'border-accent bg-accent-tint-bg' : 'border-border bg-card hover:border-text-faint',
       )}
     >
-      <span className="flex items-center gap-2 text-sm font-medium text-text-secondary">
+      <span className="flex items-center gap-2 text-xs text-text-secondary">
         <Icon className="h-4 w-4" aria-hidden />
         {label}
       </span>
       <div className="flex items-baseline gap-1">
-        <span className={cn('text-2xl font-semibold', isCritical ? 'text-critical-text' : 'text-text-primary')}>
+        <span className={cn('text-[26px] font-bold tracking-tight', isCritical ? 'text-critical-text' : 'text-text-primary')}>
           {value !== null ? value.toFixed(1) : '—'}
         </span>
         {value !== null && <span className="text-sm text-text-muted">{unit}</span>}
@@ -59,6 +62,7 @@ export function MetricCard({
       {subtitle && <span className="text-xs text-text-muted-2">{subtitle}</span>}
       <Progress
         value={barValue}
+        className="h-[5px] bg-border-light"
         indicatorClassName={isCritical ? 'bg-critical-text' : 'bg-primary'}
         aria-label={`${label}: ${value !== null ? `${value.toFixed(1)}${unit}` : 'sin datos'}`}
       />

@@ -1,5 +1,6 @@
 import { Construction, ShieldAlert } from 'lucide-react'
 
+import { FloatCard } from '@/shared/components/FloatCard'
 import { usePermissions } from '@/shared/hooks/usePermissions'
 
 import { BackupPanel } from '../backups/components/BackupPanel'
@@ -21,9 +22,9 @@ export function MetricSidePanel({ selected, metric }: MetricSidePanelProps) {
 
   if (selected === 'temperature') {
     return (
-      <div className="rounded-xl border border-border bg-card p-4">
+      <FloatCard className="p-4">
         <FanDetailPanel metric={metric} />
-      </div>
+      </FloatCard>
     )
   }
 
@@ -32,23 +33,23 @@ export function MetricSidePanel({ selected, metric }: MetricSidePanelProps) {
     // SystemMonitor — un User con el módulo ve el Monitor pero no los backups.
     if (!isAdmin) {
       return (
-        <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-border bg-card p-4 text-center">
+        <FloatCard className="flex flex-col items-center justify-center gap-2 p-4 text-center">
           <ShieldAlert className="h-5 w-5 text-text-faint" aria-hidden />
           <p className="text-sm font-medium text-text-secondary">Backups</p>
           <p className="text-xs text-text-muted">El estado de los backups solo está disponible para administradores.</p>
-        </div>
+        </FloatCard>
       )
     }
     return <BackupPanel />
   }
 
   return (
-    <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-border bg-card p-4 text-center">
+    <FloatCard className="flex flex-col items-center justify-center gap-2 p-4 text-center">
       <Construction className="h-5 w-5 text-text-faint" aria-hidden />
       <p className="text-sm font-medium text-text-secondary">En desarrollo</p>
       <p className="text-xs text-text-muted">
         Espacio reservado para más datos de esta métrica (ej. modelo de CPU, tipo de memoria).
       </p>
-    </div>
+    </FloatCard>
   )
 }

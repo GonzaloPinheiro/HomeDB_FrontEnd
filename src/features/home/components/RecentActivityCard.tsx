@@ -1,6 +1,6 @@
 import { History } from 'lucide-react'
 
-import { FloatCard } from './FloatCard'
+import { FloatCard } from '@/shared/components/FloatCard'
 
 // PENDIENTE (CLAUDE.md §6.18): "Actividad reciente". El backend no expone ningún
 // endpoint de actividad propia del usuario: el log de auditoría (§5.4) es solo

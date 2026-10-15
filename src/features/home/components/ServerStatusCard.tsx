@@ -10,7 +10,7 @@ import { usePermissions } from '@/shared/hooks/usePermissions'
 import { formatBytes } from '@/shared/lib/formatBytes'
 import { cn } from '@/shared/lib/utils'
 
-import { FloatCard } from './FloatCard'
+import { FloatCard } from '@/shared/components/FloatCard'
 
 type MetricRowProps = {
   label: string
