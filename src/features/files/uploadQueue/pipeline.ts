@@ -166,10 +166,20 @@ export async function getUploadStatus(sessionId: string, signal: AbortSignal): P
   return uploadStatusResponseSchema.parse(unwrap(response.data)).receivedChunks
 }
 
-/** POST /files/upload/{sessionId}/complete — puede devolver el DTO o un string si ya estaba completada (ver uploadCompleteResponseSchema). */
+/**
+ * POST /files/upload/{sessionId}/complete — puede devolver el DTO o un string si ya estaba completada (ver uploadCompleteResponseSchema).
+ *
+ * CLAUDE.md §7.4: sin timeout. El servidor responde solo cuando termina de
+ * concatenar los chunks y copiar el archivo a su destino final, algo que con
+ * archivos de decenas de GB tarda minutos. Con el timeout de 30s por defecto de
+ * `api`, el front cortaba la petición a mitad de ensamblado y el backend (que
+ * usa el CancellationToken de la request) cancelaba la sesión y borraba todos
+ * los chunks ya subidos.
+ */
 export async function completeUploadSession(sessionId: string, signal: AbortSignal) {
   const response = await api.post<ApiObjResponse<unknown>>(`/files/upload/${sessionId}/complete`, undefined, {
     signal,
+    timeout: 0,
   })
   return uploadCompleteResponseSchema.parse(unwrap(response.data))
 }

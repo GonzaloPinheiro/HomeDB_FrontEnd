@@ -2,6 +2,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import { toApiError } from '@/shared/api/client'
+import { ApiErrorCodes } from '@/shared/api/errors'
 
 import { filesKeys } from '../api'
 import {
@@ -176,7 +177,19 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
           // StorageLimitExceeded...) es un rechazo real del servidor: seguirá
           // fallando igual aunque vuelva la conexión, así que no se reintenta
           // solo, se deja para que el usuario decida.
-          patchEntry(entry.id, { status: 'error', error: apiError.message, errorCode: apiError.errorCode })
+          // Sesión muerta en el servidor (cancelada, p. ej. porque falló el
+          // ensamblado en `complete`, o inexistente): reanudarla con GET /status
+          // nunca funcionaría, así que se descarta el sessionId y el próximo
+          // reintento empieza una subida nueva en vez de fallar siempre igual.
+          const isDeadSession =
+            apiError.errorCode === ApiErrorCodes.UploadSessionNotActive ||
+            apiError.errorCode === ApiErrorCodes.UploadSessionNotFound
+          patchEntry(entry.id, {
+            status: 'error',
+            error: apiError.message,
+            errorCode: apiError.errorCode,
+            ...(isDeadSession ? { sessionId: undefined, totalChunks: 0, chunks: [], progress: 0 } : {}),
+          })
         }
       } finally {
         controllersRef.current.delete(entry.id)
