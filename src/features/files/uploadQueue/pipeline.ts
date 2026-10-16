@@ -3,18 +3,39 @@ import type { ApiObjResponse } from '@/shared/types/api'
 
 import { uploadCompleteResponseSchema, uploadInitResponseSchema, uploadStatusResponseSchema } from '../types'
 
-// CLAUDE.md §7.4: tamaño de chunk fijo, dentro del margen que documenta el
-// propio backend (UploadController.ReceiveChunkAsync: RequestSizeLimit de
-// 35MB "margen sobre chunks de 20-30MB").
-export const CHUNK_SIZE_BYTES = 24 * 1024 * 1024
+// CLAUDE.md §7.4: límite de la petición de chunk en el backend
+// (UploadController.ReceiveChunkAsync: `[RequestSizeLimit(35_000_000)]`, en bytes
+// decimales — 35 MB, no 35 MiB). Es el techo duro: un chunk que lo supere recibe
+// un 413 y no hay reintento que lo arregle. Se mantiene aquí como constante solo
+// para poder comprobar el invariante en pipeline.test.ts si alguien sube el chunk.
+export const BACKEND_CHUNK_REQUEST_LIMIT_BYTES = 35_000_000
 
-// Nº máximo de archivos subiendo a la vez. Dentro de cada archivo los chunks
-// van secuenciales (nunca en paralelo). Protege el rate limit global del
-// backend (100 req/min por IP, compartido con el resto de la app — ver
-// RateLimiterExtensions.cs) — sin este límite, subir varios archivos grandes
-// a la vez agota el cupo y empieza a devolver 429 a mitad de una subida. Si
-// aun así se agota (muchos archivos pequeños = 3 peticiones cada uno), la
-// cola se pausa entera y se reanuda sola, ver rateLimit.ts.
+// CLAUDE.md §7.4: tamaño de chunk fijo, el mayor potencia de 2 que cabe bajo el
+// límite del backend: 32 MiB = 33.554.432 B, deja ~1,4 MB de margen para el
+// sobre multipart (nombres de campo, sessionId, chunkNumber, cabeceras). 33 MiB
+// ya dejaría solo ~0,4 MB, demasiado ajustado. Un chunk mayor reduce el nº de
+// peticiones (menos cupo del rate limiter, menos viajes ida y vuelta), pero cada
+// fallo repite más datos — a partir de aquí el beneficio es marginal.
+export const CHUNK_SIZE_BYTES = 32 * 1024 * 1024
+
+// CLAUDE.md §7.4 — EL ÚNICO MANDO del paralelismo de subida. Nº máximo de chunks
+// en vuelo a la vez en TODA la cola (suma de todos los archivos); un archivo
+// grande puede usarlos todos. Subirlo o bajarlo es tocar solo este número:
+// concurrency.ts lo aplica con un semáforo global, no hay otro sitio que ajustar.
+// Con 1 se vuelve al comportamiento secuencial de antes. Valor 4: suficiente
+// para tapar la latencia de cada petición (el servidor es una Raspberry Pi
+// detrás de un túnel de Cloudflare) sin saturar su disco ni la subida del
+// usuario; si el enlace ya va al máximo con un chunk, subirlo no acelera nada.
+export const MAX_PARALLEL_CHUNK_UPLOADS = 4
+
+// Nº máximo de archivos subiendo a la vez (cada uno con su sesión). Es
+// independiente del paralelismo de chunks de arriba: el tope de chunks en vuelo
+// es global, así que más archivos simultáneos no multiplican las peticiones,
+// solo se reparten los mismos huecos. Dentro de cada archivo los chunks se
+// reparten entre los workers de concurrency.ts. Protege el rate limit global del
+// backend (compartido con el resto de la app — RateLimiterExtensions.cs): si
+// aun así se agota (muchos archivos pequeños = 3 peticiones cada uno), la cola
+// se pausa entera y se reanuda sola, ver rateLimit.ts.
 export const MAX_CONCURRENT_UPLOADS = 2
 
 const MAX_CHUNK_ATTEMPTS = 3
@@ -24,7 +45,7 @@ const BASE_RETRY_DELAY_MS = 500
 // realmente colgada (no solo lenta) y se aborta para que uploadChunkWithRetry
 // lo trate como un fallo transitorio más. Un timeout fijo de duración total
 // (como el de 30s de la instancia de axios, client.ts) mataría un chunk de
-// 24MB legítimamente lento en una conexión pobre aunque siguiera avanzando —
+// 32MB legítimamente lento en una conexión pobre aunque siguiera avanzando —
 // por eso este chunk desactiva ese timeout (`timeout: 0`) y usa en su lugar
 // este temporizador que se reinicia en cada evento de progreso real.
 const STALL_TIMEOUT_MS = 20_000
@@ -53,16 +74,25 @@ export function backoffDelayMs(attempt: number): number {
 /**
  * % agregado sobre el tamaño TOTAL del archivo, no del chunk en curso — evita
  * que la barra dé saltos bruscos entre chunks grandes (§6.4).
+ *
+ * `loadedBytesPerChunk[i]` son los bytes ya enviados del chunk i (su tamaño
+ * completo si está confirmado, un valor parcial si va en vuelo, 0 si no ha
+ * empezado). Se indexa por chunk y no se cuenta "los N primeros" porque con
+ * subidas en paralelo (y al reanudar) los chunks terminados no son un prefijo.
+ * Cada valor se acota a su chunk: `onUploadProgress` cuenta también el sobre
+ * multipart, que haría pasarse del tamaño real.
  */
 export function aggregateProgress(
   chunkSizes: number[],
-  doneChunkCount: number,
-  currentChunkLoadedBytes: number,
+  loadedBytesPerChunk: number[],
   totalSizeBytes: number,
 ): number {
   if (totalSizeBytes <= 0) return 0
-  const doneBytes = chunkSizes.slice(0, doneChunkCount).reduce((sum, size) => sum + size, 0)
-  return Math.min(100, Math.round(((doneBytes + currentChunkLoadedBytes) / totalSizeBytes) * 100))
+  let loadedBytes = 0
+  chunkSizes.forEach((size, index) => {
+    loadedBytes += Math.min(Math.max(loadedBytesPerChunk[index] ?? 0, 0), size)
+  })
+  return Math.min(100, Math.round((loadedBytes / totalSizeBytes) * 100))
 }
 
 function delay(ms: number): Promise<void> {

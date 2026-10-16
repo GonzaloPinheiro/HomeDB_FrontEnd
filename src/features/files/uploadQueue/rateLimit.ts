@@ -1,7 +1,7 @@
 import { isRateLimitError, toApiError } from '@/shared/api/client'
 
 // CLAUDE.md §5.4/§7.4: el backend responde 429 con `Retry-After: 60` y su token
-// bucket global (100 req/min por IP, repuesto de golpe cada 60s) se comparte
+// bucket global (500 req/min por IP, repuesto de golpe cada 60s) se comparte
 // con TODA la app. Este valor es el de reserva cuando el navegador no puede
 // leer la cabecera (hoy no la expone por CORS, ver parseRetryAfterMs).
 export const DEFAULT_RATE_LIMIT_PAUSE_MS = 60_000

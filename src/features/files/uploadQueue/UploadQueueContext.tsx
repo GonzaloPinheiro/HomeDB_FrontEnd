@@ -5,9 +5,11 @@ import { toApiError } from '@/shared/api/client'
 import { ApiErrorCodes } from '@/shared/api/errors'
 
 import { filesKeys } from '../api'
+import { AsyncSemaphore, runWithConcurrency } from './concurrency'
 import {
   CHUNK_SIZE_BYTES,
   MAX_CONCURRENT_UPLOADS,
+  MAX_PARALLEL_CHUNK_UPLOADS,
   aggregateProgress,
   completeUploadSession,
   computeChunkPlan,
@@ -61,6 +63,11 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
   // Una única pausa compartida por todas las subidas (rateLimit.ts).
   const [rateLimitGate] = useState(() => new RateLimitGate(Date.now, setRateLimitedUntil))
 
+  // Tope GLOBAL de chunks en vuelo, compartido por todos los archivos de la cola
+  // (concurrency.ts). Es lo que hace que MAX_PARALLEL_CHUNK_UPLOADS sea el único
+  // mando del paralelismo: da igual cuántos archivos suban a la vez.
+  const [chunkSlots] = useState(() => new AsyncSemaphore(MAX_PARALLEL_CHUNK_UPLOADS))
+
   // Estado imperativo que no necesita disparar un render por sí mismo.
   const controllersRef = useRef(new Map<string, AbortController>())
   const startedRef = useRef(new Set<string>())
@@ -77,27 +84,17 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
     )
   }, [])
 
-  // Los fragmentos en 'uploading' de una entrada (a lo sumo uno: van secuenciales)
-  // pasan al estado final que corresponda cuando la subida se corta.
-  const settleInFlightChunks = useCallback((id: string, status: ChunkStatus) => {
-    setEntries((current) =>
-      current.map((entry) =>
-        entry.id === id
-          ? { ...entry, chunks: entry.chunks.map((chunk) => (chunk === 'uploading' ? status : chunk)) }
-          : entry,
-      ),
-    )
-  }, [])
-
   const runPipeline = useCallback(
     async (entry: UploadQueueEntry) => {
       const controller = new AbortController()
       controllersRef.current.set(entry.id, controller)
       const plan = computeChunkPlan(entry.file.size)
       // Toda petición HTTP del pipeline pasa por aquí: respeta la pausa global y
-      // ante un 429 la activa y reintenta sin dar el archivo por fallido.
-      const limited = <T,>(request: () => Promise<T>): Promise<T> =>
-        withRateLimitRetry(rateLimitGate, controller.signal, request)
+      // ante un 429 la activa y reintenta sin dar el archivo por fallido. Recibe
+      // el signal porque las peticiones de chunk usan el del pool (se aborta si
+      // otro chunk del mismo archivo falla), no solo el de cancelación del usuario.
+      const limited = <T,>(request: () => Promise<T>, signal: AbortSignal = controller.signal): Promise<T> =>
+        withRateLimitRetry(rateLimitGate, signal, request)
 
       try {
         let alreadyReceived: number[] = []
@@ -132,32 +129,64 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
           })
         }
 
-        let doneChunkCount = alreadyReceived.length
-        // axios emite onUploadProgress muy a menudo; cada patchEntry re-renderiza
-        // a todos los consumidores del Context (modal, bandeja) y relanza el
-        // planificador. El % ya viene redondeado, así que solo se parchea si cambia.
-        let lastProgress = -1
+        // Bytes ya enviados de cada chunk (tamaño completo si está confirmado).
+        // Con chunks en paralelo cada uno avanza por su cuenta, por eso el
+        // progreso se agrega desde este array y no desde un contador secuencial.
+        const received = new Set(alreadyReceived)
+        const loadedBytes: number[] = plan.chunkSizes.map((size, index) => (received.has(index + 1) ? size : 0))
+        const pendingChunks: number[] = []
         for (let chunkNumber = 1; chunkNumber <= plan.totalChunks; chunkNumber++) {
-          if (alreadyReceived.includes(chunkNumber)) continue
-
-          setChunkStatus(entry.id, chunkNumber - 1, 'uploading')
-          const start = (chunkNumber - 1) * CHUNK_SIZE_BYTES
-          const blob = entry.file.slice(start, start + plan.chunkSizes[chunkNumber - 1])
-
-          await limited(() =>
-            uploadChunkWithRetry(sessionId, chunkNumber, blob, controller.signal, (loadedBytes) => {
-              const progress = aggregateProgress(plan.chunkSizes, doneChunkCount, loadedBytes, entry.file.size)
-              if (progress === lastProgress) return
-              lastProgress = progress
-              patchEntry(entry.id, { progress })
-            }),
-          )
-
-          doneChunkCount += 1
-          setChunkStatus(entry.id, chunkNumber - 1, 'done')
-          lastProgress = aggregateProgress(plan.chunkSizes, doneChunkCount, 0, entry.file.size)
-          patchEntry(entry.id, { progress: lastProgress })
+          if (!received.has(chunkNumber)) pendingChunks.push(chunkNumber)
         }
+
+        // axios emite onUploadProgress muy a menudo (y ahora de varios chunks a la
+        // vez); cada patchEntry re-renderiza a todos los consumidores del Context
+        // (modal, bandeja) y relanza el planificador. El % ya viene redondeado, así
+        // que solo se parchea si cambia.
+        let lastProgress = -1
+        const reportProgress = () => {
+          const progress = aggregateProgress(plan.chunkSizes, loadedBytes, entry.file.size)
+          if (progress === lastProgress) return
+          lastProgress = progress
+          patchEntry(entry.id, { progress })
+        }
+        reportProgress() // al reanudar, muestra de inicio lo que el servidor ya tiene
+
+        // CLAUDE.md §7.4: los chunks pendientes se reparten entre hasta
+        // MAX_PARALLEL_CHUNK_UPLOADS workers (con el tope global de chunkSlots). Si
+        // uno falla del todo, se aborta el resto y se propaga ese primer error.
+        await runWithConcurrency(
+          pendingChunks,
+          { concurrency: MAX_PARALLEL_CHUNK_UPLOADS, semaphore: chunkSlots, signal: controller.signal },
+          async (chunkNumber, chunkSignal) => {
+            const index = chunkNumber - 1
+            const start = index * CHUNK_SIZE_BYTES
+            const blob = entry.file.slice(start, start + plan.chunkSizes[index])
+
+            setChunkStatus(entry.id, index, 'uploading')
+            try {
+              await limited(() => {
+                // Si la petición se repite (tras una pausa por 429) arranca de cero.
+                loadedBytes[index] = 0
+                return uploadChunkWithRetry(sessionId, chunkNumber, blob, chunkSignal, (chunkLoadedBytes) => {
+                  loadedBytes[index] = chunkLoadedBytes
+                  reportProgress()
+                })
+              }, chunkSignal)
+            } catch (error) {
+              // Con el signal ya abortado el chunk no ha fallado: lo abortó la
+              // cancelación del usuario o el fallo de OTRO chunk, y sigue pendiente.
+              loadedBytes[index] = 0
+              setChunkStatus(entry.id, index, chunkSignal.aborted ? 'pending' : 'error')
+              reportProgress()
+              throw error
+            }
+
+            loadedBytes[index] = plan.chunkSizes[index]
+            setChunkStatus(entry.id, index, 'done')
+            reportProgress()
+          },
+        )
 
         await limited(() => completeUploadSession(sessionId, controller.signal))
         patchEntry(entry.id, { status: 'done', progress: 100 })
@@ -165,11 +194,10 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
         void queryClient.invalidateQueries({ queryKey: filesKeys.storageUsage })
       } catch (error) {
         if (controller.signal.aborted) {
-          settleInFlightChunks(entry.id, 'pending')
           patchEntry(entry.id, { status: 'cancelled' })
         } else {
-          // Sin esto el fragmento que falló se quedaría "subiendo" (pulsando) para siempre en la tira de §6.4.
-          settleInFlightChunks(entry.id, 'error')
+          // Los fragmentos en vuelo ya se resolvieron en su tarea (error / pendiente),
+          // así que ninguno se queda "subiendo" (pulsando) para siempre en la tira de §6.4.
           const apiError = toApiError(error)
           // errorCode null = nunca llegó una respuesta real del backend (red
           // caída, stall, timeout) — es justo el caso que reintenta solo el
@@ -195,7 +223,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
         controllersRef.current.delete(entry.id)
       }
     },
-    [patchEntry, queryClient, rateLimitGate, setChunkStatus, settleInFlightChunks],
+    [chunkSlots, patchEntry, queryClient, rateLimitGate, setChunkStatus],
   )
 
   // Limpia el aviso de pausa al llegar su instante. Comparar contra el valor
