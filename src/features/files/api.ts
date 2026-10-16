@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import { api, toApiError, unwrap } from '@/shared/api/client'
 import type { ApiObjResponse } from '@/shared/types/api'
 
+import { BULK_CONCURRENCY, describeBulkOutcome, runBulk } from './bulk'
 import {
   deleteFileResponseSchema,
   deleteFolderResponseSchema,
@@ -66,6 +67,26 @@ function toastError(error: unknown): void {
   toast.error(toApiError(error).message)
 }
 
+// Peticiones sueltas compartidas por los hooks de un elemento y los de lote
+// (useBulkDelete / useBulkMove): una sola fuente de verdad del contrato de cada
+// endpoint, para que ambos caminos no puedan divergir.
+async function deleteFolderRequest(folderId: number) {
+  const response = await api.delete<ApiObjResponse<unknown>>(`/folders/${folderId}`)
+  return deleteFolderResponseSchema.parse(unwrap(response.data))
+}
+
+async function deleteFileRequest(fileId: number) {
+  const response = await api.delete<ApiObjResponse<unknown>>(`/files/${fileId}`)
+  return deleteFileResponseSchema.parse(unwrap(response.data))
+}
+
+async function moveFileRequest(fileId: number, targetFolderId: number | null) {
+  const response = await api.patch<ApiObjResponse<unknown>>(`/files/${fileId}`, {
+    newFolderId: targetFolderId,
+  })
+  return fileItemSchema.parse(unwrap(response.data))
+}
+
 export function useCreateFolder(parentFolderId: number | null) {
   const queryClient = useQueryClient()
   return useMutation({
@@ -102,10 +123,7 @@ export function useRenameFolder(parentFolderId: number | null) {
 export function useDeleteFolder(parentFolderId: number | null) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: async (folderId: number) => {
-      const response = await api.delete<ApiObjResponse<unknown>>(`/folders/${folderId}`)
-      return deleteFolderResponseSchema.parse(unwrap(response.data))
-    },
+    mutationFn: deleteFolderRequest,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: filesKeys.contents(parentFolderId) })
       // §6.12/§7.8: cambia el espacio ocupado -> solo la query de USO
@@ -118,10 +136,7 @@ export function useDeleteFolder(parentFolderId: number | null) {
 export function useDeleteFile(folderId: number | null) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: async (fileId: number) => {
-      const response = await api.delete<ApiObjResponse<unknown>>(`/files/${fileId}`)
-      return deleteFileResponseSchema.parse(unwrap(response.data))
-    },
+    mutationFn: deleteFileRequest,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: filesKeys.contents(folderId) })
       void queryClient.invalidateQueries({ queryKey: filesKeys.storageUsage })
@@ -153,18 +168,12 @@ export function useDeleteFile(folderId: number | null) {
  * solitario es seguro (no toca el nombre), pero renombrar en solitario NO
  * puede omitir `newFolderId` o el archivo saltaría a la raíz (ver useRenameFile).
  *
- * ⚠️ BUG DE BACKEND CONFIRMADO (fase de integración, pendiente de arreglo del
- * usuario en HomeDB/): `UpdateFileAsync` llama a
- * `_fileItemRepository.GetByIdAsync(fileId, cToken)` SIN el tercer argumento
- * (`asNoTracking`), que por defecto es `true` — la entidad devuelta no queda
- * trackeada por EF Core, así que mutar `FileName`/`FolderId` sobre ella y
- * llamar a `SaveChangesAsync()` NO persiste nada, aunque la API responda 200
- * con un DTO que aparenta el cambio (construido a partir del objeto mutado en
- * memoria, nunca guardado). Verificado en vivo: renombrar/mover un archivo da
- * toast de éxito, pero el nombre/carpeta reales no cambian en BD. El front no
- * puede compensar esto (la respuesta 200 no distingue "persistido" de
- * "mutado en memoria") — hay que arreglarlo en el backend añadiendo
- * `asNoTracking: false` a esa llamada.
+ * ✅ El bug de persistencia que tuvo este endpoint (`GetByIdAsync` con
+ * `asNoTracking` por defecto, así que `SaveChangesAsync` no guardaba nada
+ * aunque la API respondiera 200) está ARREGLADO en el backend: ahora
+ * `FilesService.UpdateFileAsync` llama a `GetByIdAsync(fileId, cToken, false)`
+ * (verificado por lectura del código en octubre 2026). Confirmar con una prueba
+ * real contra el despliegue — esta verificación solo comprobó el código fuente.
  */
 export function useMoveFile(sourceFolderId: number | null) {
   const queryClient = useQueryClient()
@@ -177,10 +186,7 @@ export function useMoveFile(sourceFolderId: number | null) {
       targetFolderId: number | null
     }) => {
       if (!FILE_MOVE_ENABLED) return null
-      const response = await api.patch<ApiObjResponse<unknown>>(`/files/${fileId}`, {
-        newFolderId: targetFolderId,
-      })
-      return fileItemSchema.parse(unwrap(response.data))
+      return moveFileRequest(fileId, targetFolderId)
     },
     onSuccess: (_moved, variables) => {
       if (!FILE_MOVE_ENABLED) {
@@ -190,6 +196,74 @@ export function useMoveFile(sourceFolderId: number | null) {
       void queryClient.invalidateQueries({ queryKey: filesKeys.contents(sourceFolderId) })
       void queryClient.invalidateQueries({ queryKey: filesKeys.contents(variables.targetFolderId) })
       toast.success('Archivo movido')
+    },
+    onError: toastError,
+  })
+}
+
+/**
+ * CLAUDE.md §6.3: eliminar varios elementos (archivos y carpetas) a la vez. No
+ * hay endpoint por lote: una petición por elemento (`runBulk`, BULK_CONCURRENCY
+ * a la vez) y UN solo toast con el resumen — un fallo no impide intentar los
+ * demás. Una carpeta con contenido da `FolderNotEmpty` y se informa como fallo
+ * de ese elemento, igual que al borrarla sola.
+ */
+export function useBulkDelete(folderId: number | null) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (items: ExplorerItem[]) =>
+      runBulk(
+        items,
+        async (item) => {
+          if (item.kind === 'folder') await deleteFolderRequest(item.id)
+          else await deleteFileRequest(item.id)
+        },
+        BULK_CONCURRENCY,
+      ),
+    onSuccess: (result) => {
+      void queryClient.invalidateQueries({ queryKey: filesKeys.contents(folderId) })
+      void queryClient.invalidateQueries({ queryKey: filesKeys.storageUsage })
+      const outcome = describeBulkOutcome(
+        result,
+        {
+          done: (count) => `${count} ${count === 1 ? 'elemento eliminado' : 'elementos eliminados'}`,
+          verb: 'eliminar',
+        },
+        (error) => toApiError(error).message,
+      )
+      if (outcome.ok) toast.success(outcome.message)
+      else toast.error(outcome.message)
+    },
+    onError: toastError,
+  })
+}
+
+/**
+ * CLAUDE.md §6.3: mover varios archivos a una carpeta (botón "Mover" de la
+ * selección y arrastrar una selección). Solo archivos: la UI no mueve carpetas
+ * (§6.3). Mismo interruptor FILE_MOVE_ENABLED que `useMoveFile`.
+ */
+export function useBulkMove(sourceFolderId: number | null) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ files, targetFolderId }: { files: ExplorerItem[]; targetFolderId: number | null }) => {
+      if (!FILE_MOVE_ENABLED) return null
+      return runBulk(files, async (file) => void (await moveFileRequest(file.id, targetFolderId)), BULK_CONCURRENCY)
+    },
+    onSuccess: (result, variables) => {
+      if (result === null) {
+        toast('Mover archivos aún no está disponible')
+        return
+      }
+      void queryClient.invalidateQueries({ queryKey: filesKeys.contents(sourceFolderId) })
+      void queryClient.invalidateQueries({ queryKey: filesKeys.contents(variables.targetFolderId) })
+      const outcome = describeBulkOutcome(
+        result,
+        { done: (count) => `${count} ${count === 1 ? 'archivo movido' : 'archivos movidos'}`, verb: 'mover' },
+        (error) => toApiError(error).message,
+      )
+      if (outcome.ok) toast.success(outcome.message)
+      else toast.error(outcome.message)
     },
     onError: toastError,
   })
