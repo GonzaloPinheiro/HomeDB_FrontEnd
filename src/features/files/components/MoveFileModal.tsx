@@ -5,7 +5,7 @@ import { Modal } from '@/shared/components/Modal'
 import { Button } from '@/shared/components/ui/button'
 import { Skeleton } from '@/shared/components/ui/skeleton'
 
-import { useFolderContents, useMoveFile } from '../api'
+import { useBulkMove, useFolderContents, useMoveFile } from '../api'
 import type { ExplorerItem } from '../types'
 
 type MoveFileModalProps = {
@@ -14,7 +14,8 @@ type MoveFileModalProps = {
   /** Carpeta donde vive el archivo ahora (origen). */
   currentFolderId: number | null
   currentFolderName: string
-  item: ExplorerItem
+  /** Archivos a mover: uno (menú de la fila) o varios (selección, §6.3). Solo archivos: las carpetas no se mueven. */
+  items: ExplorerItem[]
 }
 
 type BrowseCrumb = { id: number | null; name: string }
@@ -25,12 +26,14 @@ const ROOT: BrowseCrumb = { id: null, name: 'Raíz' }
 // para teclado y táctil. Selector sobre el Modal pequeño existente (§6.14) con
 // filas-botón nativas: Tab/Enter funcionan sin código extra. Se navega hacia
 // dentro con Enter/clic, "Subir" vuelve un nivel visitado y "Raíz" salta arriba.
+// Con un solo archivo usa la mutation individual (toast "Archivo movido"); con
+// varios, la de lote (un único toast con el resumen, §6.3).
 export function MoveFileModal({
   open,
   onClose,
   currentFolderId,
   currentFolderName,
-  item,
+  items,
 }: MoveFileModalProps) {
   // Trail local del selector: empieza en la carpeta actual del archivo
   const [browseTrail, setBrowseTrail] = useState<BrowseCrumb[]>([
@@ -41,6 +44,9 @@ export function MoveFileModal({
   const contents = useFolderContents(browsing.id)
   const folders = (contents.data ?? []).filter((entry) => entry.kind === 'folder')
   const moveFile = useMoveFile(currentFolderId)
+  const bulkMove = useBulkMove(currentFolderId)
+  const isPending = moveFile.isPending || bulkMove.isPending
+  const isSingle = items.length === 1
 
   const close = () => {
     setBrowseTrail([{ id: currentFolderId, name: currentFolderName }])
@@ -48,10 +54,14 @@ export function MoveFileModal({
   }
 
   const confirm = () => {
-    moveFile.mutate(
-      { fileId: item.id, targetFolderId: browsing.id },
-      { onSuccess: close }, // con FILE_MOVE_ENABLED=false, el hook muestra el toast informativo
-    )
+    if (isSingle) {
+      moveFile.mutate(
+        { fileId: items[0].id, targetFolderId: browsing.id },
+        { onSuccess: close }, // con FILE_MOVE_ENABLED=false, el hook muestra el toast informativo
+      )
+    } else {
+      bulkMove.mutate({ files: items, targetFolderId: browsing.id }, { onSuccess: close })
+    }
   }
 
   const isSameFolder = browsing.id === currentFolderId
@@ -60,15 +70,15 @@ export function MoveFileModal({
     <Modal
       open={open}
       onOpenChange={(value) => !value && close()}
-      title={`Mover "${item.name}"`}
+      title={isSingle ? `Mover "${items[0].name}"` : `Mover ${items.length} archivos`}
       size="small"
       footer={
         <>
           <Button variant="outline" onClick={close}>
             Cancelar
           </Button>
-          <Button onClick={confirm} disabled={isSameFolder || moveFile.isPending}>
-            {moveFile.isPending ? <Loader2 className="animate-spin" /> : null}
+          <Button onClick={confirm} disabled={isSameFolder || isPending}>
+            {isPending ? <Loader2 className="animate-spin" /> : null}
             Mover aquí
           </Button>
         </>
@@ -108,7 +118,7 @@ export function MoveFileModal({
           </div>
         ) : folders.length === 0 ? (
           <p className="px-1 py-3 text-sm text-text-muted">
-            Sin subcarpetas aquí — puedes mover el archivo a esta carpeta.
+            Sin subcarpetas aquí — puedes {isSingle ? 'mover el archivo' : 'mover los archivos'} a esta carpeta.
           </p>
         ) : (
           <ul className="flex max-h-56 flex-col gap-1 overflow-y-auto">
@@ -132,7 +142,8 @@ export function MoveFileModal({
 
         {isSameFolder && (
           <p className="text-xs text-text-muted">
-            El archivo ya está en esta carpeta — navega a otra para poder moverlo.
+            {isSingle ? 'El archivo ya está' : 'Los archivos ya están'} en esta carpeta — navega a otra para poder moverlo
+            {isSingle ? '' : 's'}.
           </p>
         )}
       </div>

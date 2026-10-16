@@ -27,6 +27,7 @@ import { formatShortDate } from '@/shared/lib/formatDate'
 import { cn } from '@/shared/lib/utils'
 
 import type { ExplorerItem } from '../types'
+import { SelectCheckbox } from './SelectCheckbox'
 
 // Componente estático (no un componente creado en render): el tipo de archivo
 // se transmite solo con el icono — no hay columna "Tipo" (§6.3)
@@ -55,13 +56,31 @@ type FileRowProps = {
   onRename: (item: ExplorerItem) => void
   onMove: (item: ExplorerItem) => void
   onDelete: (item: ExplorerItem) => void
+  selected: boolean
+  /** Hay algo seleccionado en la lista: las casillas de TODAS las filas pasan a verse. */
+  selectionActive: boolean
+  /** Alterna la selección de esta fila; con Shift, rango desde la última marcada. */
+  onSelect: (item: ExplorerItem, modifiers: { shift: boolean }) => void
 }
 
 // CLAUDE.md §6.3: fila unificada — carpeta y archivo comparten estructura,
 // diferenciados solo por el icono. Toda la fila de una carpeta es clicable
 // para entrar, sin chevron de afordancia. Drag & drop con dnd-kit (sensores
 // de puntero, §7.5): los archivos son arrastrables; las carpetas, destinos.
-export function FileRow({ item, onEnterFolder, onDownload, onRename, onMove, onDelete }: FileRowProps) {
+// Selección múltiple (§6.3): casilla a la izquierda (visible al pasar el ratón,
+// con la selección activa y siempre en táctil), y Ctrl/Cmd+clic o Shift+clic en
+// cualquier parte de la fila — que entonces NO entra en la carpeta.
+export function FileRow({
+  item,
+  onEnterFolder,
+  onDownload,
+  onRename,
+  onMove,
+  onDelete,
+  selected,
+  selectionActive,
+  onSelect,
+}: FileRowProps) {
   const isFolder = item.kind === 'folder'
 
   const {
@@ -84,6 +103,15 @@ export function FileRow({ item, onEnterFolder, onDownload, onRename, onMove, onD
     if (isFolder) onEnterFolder(item)
   }
 
+  const onRowClick = (event: MouseEvent) => {
+    if (event.shiftKey || event.ctrlKey || event.metaKey) {
+      event.preventDefault()
+      onSelect(item, { shift: event.shiftKey })
+      return
+    }
+    activate()
+  }
+
   const onKeyDown = (event: KeyboardEvent) => {
     if (isFolder && (event.key === 'Enter' || event.key === ' ')) {
       event.preventDefault()
@@ -101,7 +129,7 @@ export function FileRow({ item, onEnterFolder, onDownload, onRename, onMove, onD
       }}
       role={isFolder ? 'button' : undefined}
       tabIndex={isFolder ? 0 : undefined}
-      onClick={activate}
+      onClick={onRowClick}
       onKeyDown={onKeyDown}
       // Listeners/atributos de arrastre solo en archivos: una carpeta (draggable
       // deshabilitado) no debe heredar aria-disabled ni listeners inertes
@@ -110,7 +138,9 @@ export function FileRow({ item, onEnterFolder, onDownload, onRename, onMove, onD
         // touch-manipulation (no touch-none): conserva el scroll táctil de la
         // lista (§10) — en táctil, mover archivos tiene su alternativa en
         // "Mover a…" (§11)
-        'group flex touch-manipulation items-center gap-3 rounded-lg px-3 py-2.5 transition-colors hover:bg-row-hover',
+        'group flex touch-manipulation select-none items-center gap-3 rounded-lg px-3 py-2.5 transition-colors hover:bg-row-hover',
+        // §6.3: fila seleccionada — tinte de acento (el resaltado de "carpeta destino" de abajo añade además el anillo)
+        selected && 'bg-accent-tint-bg hover:bg-accent-tint-bg',
         // §6.1 (--row-hover): el sombreado se aplica a carpetas y archivos; solo las carpetas son clicables
         isFolder && 'cursor-pointer focus-visible:bg-row-hover focus-visible:outline-none',
         // §6.3: resaltar la carpeta mientras un archivo se arrastra encima
@@ -118,6 +148,15 @@ export function FileRow({ item, onEnterFolder, onDownload, onRename, onMove, onD
         isDragging && 'opacity-40',
       )}
     >
+      <SelectCheckbox
+        checked={selected}
+        onToggle={(event) => onSelect(item, { shift: event.shiftKey })}
+        label={`${selected ? 'Deseleccionar' : 'Seleccionar'} ${item.name}`}
+        className={cn(
+          // Oculta hasta que haga falta; accesible por teclado (focus) y en táctil (sin hover)
+          !selected && !selectionActive && 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100',
+        )}
+      />
       <ItemIcon item={item} />
       <span className="min-w-0 flex-1 truncate text-sm text-text-primary">{item.name}</span>
       <span className="hidden w-20 shrink-0 text-right text-sm text-text-muted-2 sm:block">
