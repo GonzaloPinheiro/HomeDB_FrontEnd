@@ -1,13 +1,16 @@
 import { Ban, Check, ChevronDown, ChevronRight, CircleAlert, Folder, Hourglass, RotateCcw, Upload, X } from 'lucide-react'
-import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from 'react'
+import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 
 import { Modal } from '@/shared/components/Modal'
 import { Button } from '@/shared/components/ui/button'
 import { Progress } from '@/shared/components/ui/progress'
+import { useFileDropZone } from '@/shared/hooks/useFileDropZone'
 import { formatBytes } from '@/shared/lib/formatBytes'
+import { formatDuration } from '@/shared/lib/formatDuration'
 import { cn } from '@/shared/lib/utils'
 
 import { useUploadQueue } from '../uploadQueue/UploadQueueContext'
+import { estimateRemainingMs } from '../uploadQueue/speed'
 import type { ChunkStatus, UploadQueueEntry } from '../uploadQueue/types'
 
 // CLAUDE.md §6.4/§6.5/§6.16: panel único de subidas, montado una vez en
@@ -37,7 +40,6 @@ export function UploadModal() {
     retryAllFailed,
     removeEntry,
   } = useUploadQueue()
-  const [isDragOver, setIsDragOver] = useState(false)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
 
@@ -46,11 +48,13 @@ export function UploadModal() {
     event.target.value = ''
   }
 
-  const onDrop = (event: DragEvent) => {
-    event.preventDefault()
-    setIsDragOver(false)
-    if (event.dataTransfer.files.length) addFiles(Array.from(event.dataTransfer.files))
-  }
+  // Zona propia del panel (scope 'element'): resalta solo sobre sí misma y no deja
+  // pasar el evento, para no duplicar la subida con la zona de pantalla completa
+  // del explorador (§6.3). Reutiliza la misma mecánica que ella (useFileDropZone).
+  const { isDragging: isDragOver, dropProps } = useFileDropZone({
+    scope: 'element',
+    onFiles: (files) => addFiles(files),
+  })
 
   const activeCount = entries.filter((e) => e.status === 'queued' || e.status === 'uploading').length
   const doneCount = entries.filter((e) => e.status === 'done').length
@@ -78,12 +82,7 @@ export function UploadModal() {
             <button
               type="button"
               onClick={() => inputRef.current?.click()}
-              onDragOver={(event) => {
-                event.preventDefault()
-                setIsDragOver(true)
-              }}
-              onDragLeave={() => setIsDragOver(false)}
-              onDrop={onDrop}
+              {...dropProps}
               className={cn(
                 'flex flex-col items-center gap-2 rounded-xl border-2 border-dashed px-4 py-6 text-sm transition-colors',
                 isDragOver
@@ -171,6 +170,20 @@ function RateLimitNotice({ until }: { until: number }) {
   )
 }
 
+// CLAUDE.md §7.4: "12 MB de 340 MB · 8,4 MB/s · quedan 2 min 14 s". Sin velocidad
+// medida (primer segundo, pausa por rate limit) se muestran solo los bytes.
+function UploadSpeedLine({ entry }: { entry: UploadQueueEntry }) {
+  const { speedBytesPerSec, uploadedBytes } = entry
+  const remainingMs = estimateRemainingMs(entry.file.size - uploadedBytes, speedBytesPerSec)
+  return (
+    <span className="mt-0.5 block truncate text-xs text-text-muted-2">
+      {formatBytes(uploadedBytes)} de {formatBytes(entry.file.size)}
+      {speedBytesPerSec !== null && speedBytesPerSec > 0 && ` · ${formatBytes(speedBytesPerSec)}/s`}
+      {remainingMs !== null && remainingMs > 0 && ` · quedan ${formatDuration(remainingMs)}`}
+    </span>
+  )
+}
+
 const CHUNK_STATUS_CLASS: Record<ChunkStatus, string> = {
   pending: 'bg-border-light',
   uploading: 'bg-accent animate-pulse',
@@ -222,6 +235,7 @@ function UploadEntryRow({ entry, expanded, onToggleExpand, onCancel, onRetry, on
               <span className="w-9 shrink-0 text-right text-xs text-text-secondary">{entry.progress}%</span>
             </div>
           )}
+          {entry.status === 'uploading' && <UploadSpeedLine entry={entry} />}
           {entry.status === 'error' && (
             <span className="flex items-center gap-1 text-xs text-critical-text">
               <CircleAlert className="h-3 w-3 shrink-0" aria-hidden />

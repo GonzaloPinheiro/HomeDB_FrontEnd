@@ -9,15 +9,17 @@ import {
   type DragStartEvent,
 } from '@dnd-kit/core'
 import { CircleAlert, FolderOpen, FolderPlus, SearchX, Upload } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import { toApiError } from '@/shared/api/client'
 import { EmptyState } from '@/shared/components/EmptyState'
+import { DropOverlay } from '@/shared/components/DropOverlay'
 import { Button } from '@/shared/components/ui/button'
 import { Input } from '@/shared/components/ui/input'
 import { useDebounce } from '@/shared/hooks/useDebounce'
+import { useFileDropZone } from '@/shared/hooks/useFileDropZone'
 
 import { downloadFile, useFolderContents, useMoveFile } from '../api'
 import { sortExplorerItems, type SortDirection, type SortKey } from '../sort'
@@ -93,19 +95,6 @@ export function FileExplorerPage() {
     if (trailIndex >= 0) return trail.slice(0, trailIndex + 1)
     return folderPath.data ?? [ROOT, { id: folderId, name: 'Carpeta' }]
   }, [trail, folderId, isCurrentTrailTail, trailIndex, folderPath.data])
-
-  // CLAUDE.md §11: evitar que soltar un archivo fuera de la zona de subida haga
-  // que el navegador lo abra y saque al usuario de la app. No interfiere con
-  // dnd-kit: sus sensores usan eventos de puntero, no HTML5 dragover/drop.
-  useEffect(() => {
-    const prevent = (event: Event) => event.preventDefault()
-    document.addEventListener('dragover', prevent)
-    document.addEventListener('drop', prevent)
-    return () => {
-      document.removeEventListener('dragover', prevent)
-      document.removeEventListener('drop', prevent)
-    }
-  }, [])
 
   const contents = useFolderContents(folderId)
   const moveFile = useMoveFile(folderId)
@@ -194,6 +183,23 @@ export function FileExplorerPage() {
 
   const currentFolderName = displayTrail[displayTrail.length - 1].name
   const isSearching = debouncedSearch.trim().length > 0
+
+  // CLAUDE.md §6.3: soltar archivos del sistema en cualquier parte de la pantalla
+  // (o pegarlos con Ctrl/Cmd+V) los sube a la carpeta que se está viendo, sin
+  // pasar por el botón "Subir". Es HTML5 DnD nativo (useFileDropZone), no dnd-kit:
+  // el arrastre INTERNO de archivos entre carpetas (§7.5) sigue yendo por dnd-kit
+  // y no emite eventos `drag*`, así que no se mezclan. El panel de subidas no se
+  // abre: la bandeja (§6.16) y este aviso bastan, y no interrumpe lo que se hacía.
+  const { isDragging } = useFileDropZone({
+    scope: 'window',
+    acceptPaste: true,
+    onFiles: (files) => {
+      const queued = uploadQueue.addFiles(files, { folderId, folderName: currentFolderName })
+      if (queued > 0) {
+        toast.success(`Subiendo ${queued} ${queued === 1 ? 'archivo' : 'archivos'} a "${currentFolderName}"`)
+      }
+    },
+  })
 
   return (
     <DndContext
@@ -333,6 +339,12 @@ export function FileExplorerPage() {
         <DeleteConfirmModal open onClose={() => setModal(null)} parentFolderId={folderId} item={modal.item} />
       )}
     </div>
+
+    <DropOverlay
+      visible={isDragging}
+      title={`Suelta para subir a "${currentFolderName}"`}
+      description="Los archivos se añaden a la cola de subida de esta carpeta."
+    />
 
     {/* Vista fantasma del archivo mientras se arrastra */}
     <DragOverlay dropAnimation={null}>
