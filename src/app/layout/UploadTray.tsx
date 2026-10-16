@@ -2,6 +2,7 @@ import { CircleAlert, Loader2, UploadCloud } from 'lucide-react'
 
 import { useUploadQueue } from '@/features/files/uploadQueue/UploadQueueContext'
 import { usePermissions } from '@/shared/hooks/usePermissions'
+import { formatBytes } from '@/shared/lib/formatBytes'
 
 // CLAUDE.md §6.16: indicador persistente de subidas — visible en cualquier
 // pantalla mientras haya entradas en la cola y el panel de detalle esté
@@ -26,8 +27,12 @@ export function UploadTray() {
     ? Math.round(uploadingEntries.reduce((sum, e) => sum + e.progress, 0) / uploadingEntries.length)
     : 0
 
+  // CLAUDE.md §7.4: velocidad total = suma de la de cada archivo que se está enviando.
+  const totalSpeed = uploadingEntries.reduce((sum, e) => sum + (e.speedBytesPerSec ?? 0), 0)
+  const speedLabel = totalSpeed > 0 ? ` · ${formatBytes(totalSpeed)}/s` : ''
+
   const label = isActive
-    ? `Subiendo ${activeEntries.length} ${activeEntries.length === 1 ? 'archivo' : 'archivos'} · ${avgProgress}%`
+    ? `Subiendo ${activeEntries.length} ${activeEntries.length === 1 ? 'archivo' : 'archivos'} · ${avgProgress}%${speedLabel}`
     : errorCount > 0
       ? `${errorCount} ${errorCount === 1 ? 'archivo' : 'archivos'} con error al subir`
       : `${entries.length} ${entries.length === 1 ? 'archivo subido' : 'archivos subidos'}`

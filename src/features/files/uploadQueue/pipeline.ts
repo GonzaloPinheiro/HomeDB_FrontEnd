@@ -72,15 +72,25 @@ export function backoffDelayMs(attempt: number): number {
 }
 
 /**
+ * Bytes ya enviados del archivo entero: suma, chunk a chunk, lo enviado de cada
+ * uno (`loadedBytesPerChunk[i]`: su tamaño completo si está confirmado, un valor
+ * parcial si va en vuelo, 0 si no ha empezado). Se indexa por chunk y no se
+ * cuenta "los N primeros" porque con subidas en paralelo (y al reanudar) los
+ * chunks terminados no son un prefijo. Cada valor se acota a su chunk:
+ * `onUploadProgress` cuenta también el sobre multipart, que haría pasarse del
+ * tamaño real.
+ */
+export function loadedBytesTotal(chunkSizes: number[], loadedBytesPerChunk: number[]): number {
+  let loadedBytes = 0
+  chunkSizes.forEach((size, index) => {
+    loadedBytes += Math.min(Math.max(loadedBytesPerChunk[index] ?? 0, 0), size)
+  })
+  return loadedBytes
+}
+
+/**
  * % agregado sobre el tamaño TOTAL del archivo, no del chunk en curso — evita
  * que la barra dé saltos bruscos entre chunks grandes (§6.4).
- *
- * `loadedBytesPerChunk[i]` son los bytes ya enviados del chunk i (su tamaño
- * completo si está confirmado, un valor parcial si va en vuelo, 0 si no ha
- * empezado). Se indexa por chunk y no se cuenta "los N primeros" porque con
- * subidas en paralelo (y al reanudar) los chunks terminados no son un prefijo.
- * Cada valor se acota a su chunk: `onUploadProgress` cuenta también el sobre
- * multipart, que haría pasarse del tamaño real.
  */
 export function aggregateProgress(
   chunkSizes: number[],
@@ -88,11 +98,7 @@ export function aggregateProgress(
   totalSizeBytes: number,
 ): number {
   if (totalSizeBytes <= 0) return 0
-  let loadedBytes = 0
-  chunkSizes.forEach((size, index) => {
-    loadedBytes += Math.min(Math.max(loadedBytesPerChunk[index] ?? 0, 0), size)
-  })
-  return Math.min(100, Math.round((loadedBytes / totalSizeBytes) * 100))
+  return Math.min(100, Math.round((loadedBytesTotal(chunkSizes, loadedBytesPerChunk) / totalSizeBytes) * 100))
 }
 
 function delay(ms: number): Promise<void> {

@@ -12,6 +12,10 @@ export type UploadQueueEntry = {
   status: UploadEntryStatus
   /** Progreso agregado 0-100 sobre el tamaño total del archivo, no del chunk en curso. */
   progress: number
+  /** Bytes ya enviados (incluye lo que va en vuelo) — se refresca ~1 vez por segundo junto con la velocidad. */
+  uploadedBytes: number
+  /** Velocidad media reciente en bytes/s, o `null` si aún no se puede medir (speed.ts). */
+  speedBytesPerSec: number | null
   /** 0 hasta que se conoce (tras responder POST /init). */
   totalChunks: number
   /** Vacío hasta que se conoce totalChunks; un valor por chunk, en orden. */

@@ -4,6 +4,7 @@ import { Outlet } from 'react-router-dom'
 import { UploadModal } from '@/features/files/components/UploadModal'
 import { UploadQueueProvider } from '@/features/files/uploadQueue/UploadQueueContext'
 import { PageSkeleton } from '@/shared/components/PageSkeleton'
+import { usePreventBrowserFileOpen } from '@/shared/hooks/usePreventBrowserFileOpen'
 
 import { Sidebar } from './Sidebar'
 import { TopHeader } from './TopHeader'
@@ -17,6 +18,10 @@ const SIDEBAR_COLLAPSED_KEY = 'sidebar-collapsed'
 // sección — AppShell no se desmonta entre rutas protegidas. UploadModal y
 // UploadTray son globales por el mismo motivo: leen del contexto, no de props.
 export function AppShell() {
+  // CLAUDE.md §11: en cualquier pantalla, soltar un archivo fuera de una zona de
+  // subida no debe abrirlo en el navegador y sacar al usuario de la app.
+  usePreventBrowserFileOpen()
+
   // El estado colapsado persiste en el dispositivo para sobrevivir a un refresco
   const [collapsed, setCollapsed] = useState(
     () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true',

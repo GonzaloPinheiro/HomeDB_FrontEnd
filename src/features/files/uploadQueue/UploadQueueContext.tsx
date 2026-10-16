@@ -1,10 +1,12 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { toast } from 'sonner'
 
 import { toApiError } from '@/shared/api/client'
 import { ApiErrorCodes } from '@/shared/api/errors'
 
 import { filesKeys } from '../api'
+import { getExtension, isAllowedExtension } from './allowedExtensions'
 import { AsyncSemaphore, runWithConcurrency } from './concurrency'
 import {
   CHUNK_SIZE_BYTES,
@@ -15,9 +17,11 @@ import {
   computeChunkPlan,
   getUploadStatus,
   initUploadSession,
+  loadedBytesTotal,
   uploadChunkWithRetry,
 } from './pipeline'
 import { RateLimitGate, withRateLimitRetry } from './rateLimit'
+import { SpeedTracker } from './speed'
 import type { ChunkStatus, UploadQueueEntry, UploadTarget } from './types'
 
 type UploadQueueContextValue = {
@@ -33,7 +37,12 @@ type UploadQueueContextValue = {
   activeTarget: UploadTarget | null
   openPanel: (target?: UploadTarget) => void
   closePanel: () => void
-  addFiles: (files: File[]) => void
+  /**
+   * Encola archivos hacia `target`, o hacia el destino activo del panel si se omite
+   * (el panel solo lo tiene abierto desde "Subir"). Devuelve cuántos se encolaron:
+   * los de extensión no admitida se rechazan aquí con un aviso (allowedExtensions.ts).
+   */
+  addFiles: (files: File[], target?: UploadTarget) => number
   cancelEntry: (id: string) => void
   /** Reintenta una entrada en error/cancelada — reanuda con GET /status si ya tenía sessionId, en vez de repetir chunks ya confirmados. */
   retryEntry: (id: string) => void
@@ -89,6 +98,8 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
       const controller = new AbortController()
       controllersRef.current.set(entry.id, controller)
       const plan = computeChunkPlan(entry.file.size)
+      // Refresco de velocidad/bytes (~1/s) mientras se envían chunks; se limpia en `finally`.
+      let speedTimer: ReturnType<typeof setInterval> | undefined
       // Toda petición HTTP del pipeline pasa por aquí: respeta la pausa global y
       // ante un 429 la activa y reintenta sin dar el archivo por fallido. Recibe
       // el signal porque las peticiones de chunk usan el del pool (se aborta si
@@ -144,13 +155,24 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
         // (modal, bandeja) y relanza el planificador. El % ya viene redondeado, así
         // que solo se parchea si cambia.
         let lastProgress = -1
+        const speedTracker = new SpeedTracker()
         const reportProgress = () => {
+          speedTracker.record(Date.now(), loadedBytesTotal(plan.chunkSizes, loadedBytes))
           const progress = aggregateProgress(plan.chunkSizes, loadedBytes, entry.file.size)
           if (progress === lastProgress) return
           lastProgress = progress
           patchEntry(entry.id, { progress })
         }
         reportProgress() // al reanudar, muestra de inicio lo que el servidor ya tiene
+
+        // La velocidad se refresca por reloj y no por evento de progreso: si la subida
+        // se atasca no llegan eventos y el valor se quedaría congelado (speed.ts la hace caer).
+        speedTimer = setInterval(() => {
+          patchEntry(entry.id, {
+            uploadedBytes: loadedBytesTotal(plan.chunkSizes, loadedBytes),
+            speedBytesPerSec: speedTracker.bytesPerSecond(Date.now()),
+          })
+        }, 1000)
 
         // CLAUDE.md §7.4: los chunks pendientes se reparten entre hasta
         // MAX_PARALLEL_CHUNK_UPLOADS workers (con el tope global de chunkSlots). Si
@@ -189,12 +211,12 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
         )
 
         await limited(() => completeUploadSession(sessionId, controller.signal))
-        patchEntry(entry.id, { status: 'done', progress: 100 })
+        patchEntry(entry.id, { status: 'done', progress: 100, uploadedBytes: entry.file.size, speedBytesPerSec: null })
         void queryClient.invalidateQueries({ queryKey: filesKeys.contents(entry.folderId) })
         void queryClient.invalidateQueries({ queryKey: filesKeys.storageUsage })
       } catch (error) {
         if (controller.signal.aborted) {
-          patchEntry(entry.id, { status: 'cancelled' })
+          patchEntry(entry.id, { status: 'cancelled', speedBytesPerSec: null })
         } else {
           // Los fragmentos en vuelo ya se resolvieron en su tarea (error / pendiente),
           // así que ninguno se queda "subiendo" (pulsando) para siempre en la tira de §6.4.
@@ -214,12 +236,16 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
             apiError.errorCode === ApiErrorCodes.UploadSessionNotFound
           patchEntry(entry.id, {
             status: 'error',
+            speedBytesPerSec: null,
             error: apiError.message,
             errorCode: apiError.errorCode,
-            ...(isDeadSession ? { sessionId: undefined, totalChunks: 0, chunks: [], progress: 0 } : {}),
+            ...(isDeadSession
+              ? { sessionId: undefined, totalChunks: 0, chunks: [], progress: 0, uploadedBytes: 0 }
+              : {}),
           })
         }
       } finally {
+        clearInterval(speedTimer)
         controllersRef.current.delete(entry.id)
       }
     },
@@ -274,19 +300,41 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
   const closePanel = useCallback(() => setIsPanelOpen(false), [])
 
   const addFiles = useCallback(
-    (files: File[]) => {
-      if (!activeTarget) return
-      const newEntries: UploadQueueEntry[] = files.map((file) => ({
+    (files: File[], target: UploadTarget | null = activeTarget): number => {
+      if (!target) return 0
+
+      // CLAUDE.md §5.4: el backend solo valida la extensión al final de la subida;
+      // se rechaza aquí para no subir un archivo grande entero y perderlo en `complete`.
+      const accepted = files.filter((file) => isAllowedExtension(file.name))
+      const rejected = files.filter((file) => !isAllowedExtension(file.name))
+      if (rejected.length > 0) {
+        const detail = rejected
+          .slice(0, 3)
+          .map((file) => `"${file.name}"${getExtension(file.name) ? '' : ' (sin extensión)'}`)
+          .join(', ')
+        const more = rejected.length > 3 ? ` y ${rejected.length - 3} más` : ''
+        toast.error(
+          rejected.length === 1
+            ? `${detail}: tipo de archivo no admitido`
+            : `${rejected.length} archivos con tipo no admitido: ${detail}${more}`,
+        )
+      }
+      if (accepted.length === 0) return 0
+
+      const newEntries: UploadQueueEntry[] = accepted.map((file) => ({
         id: crypto.randomUUID(),
         file,
-        folderId: activeTarget.folderId,
-        folderName: activeTarget.folderName,
+        folderId: target.folderId,
+        folderName: target.folderName,
         status: 'queued',
         progress: 0,
+        uploadedBytes: 0,
+        speedBytesPerSec: null,
         totalChunks: 0,
         chunks: [],
       }))
       setEntries((current) => [...current, ...newEntries])
+      return accepted.length
     },
     [activeTarget],
   )
