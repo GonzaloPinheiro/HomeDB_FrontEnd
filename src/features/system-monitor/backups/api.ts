@@ -16,7 +16,7 @@ export const BACKUP_HISTORY_PAGE_SIZE = 10
 
 // Mientras hay un backup en curso el panel sondea más rápido para reflejar el
 // final sin esperar al ciclo normal. Muy por debajo del rate limit global del
-// backend (100 req/min por IP, §7.4).
+// backend (500 req/min por IP, §7.4).
 export const BACKUP_RUNNING_POLL_MS = 5_000
 
 const TRIGGER_MUTATION_KEY = ['system-monitor', 'backups', 'trigger'] as const
