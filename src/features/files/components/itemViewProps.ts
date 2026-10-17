@@ -5,6 +5,7 @@ import type { ExplorerItem } from '../types'
 export type ExplorerItemViewProps = {
   item: ExplorerItem
   onEnterFolder: (item: ExplorerItem) => void
+  onOpen: (item: ExplorerItem) => void
   onDownload: (item: ExplorerItem) => void
   onRename: (item: ExplorerItem) => void
   onMove: (item: ExplorerItem) => void

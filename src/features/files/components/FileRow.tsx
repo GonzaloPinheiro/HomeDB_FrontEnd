@@ -19,6 +19,7 @@ import { SelectCheckbox } from './SelectCheckbox'
 export function FileRow({
   item,
   onEnterFolder,
+  onOpen,
   onDownload,
   onRename,
   onMove,
@@ -27,8 +28,7 @@ export function FileRow({
   selectionActive,
   onSelect,
 }: ExplorerItemViewProps) {
-  const isFolder = item.kind === 'folder'
-  const { rowProps, isDragging, isOver } = useExplorerItemInteraction({ item, onEnterFolder, onSelect })
+  const { rowProps, isDragging, isOver, isActivatable } = useExplorerItemInteraction({ item, onEnterFolder, onOpen, onSelect })
 
   return (
     <div
@@ -40,8 +40,8 @@ export function FileRow({
         'group flex touch-manipulation select-none items-center gap-3 rounded-lg px-3 py-2.5 transition-colors hover:bg-row-hover',
         // §6.3: fila seleccionada — tinte de acento (el resaltado de "carpeta destino" de abajo añade además el anillo)
         selected && 'bg-accent-tint-bg hover:bg-accent-tint-bg',
-        // §6.1 (--row-hover): el sombreado se aplica a carpetas y archivos; solo las carpetas son clicables
-        isFolder && 'cursor-pointer focus-visible:bg-row-hover focus-visible:outline-none',
+        // §6.1 (--row-hover): el sombreado se aplica a todo; son clicables las carpetas y las imágenes/vídeos (§6.3c)
+        isActivatable && 'cursor-pointer focus-visible:bg-row-hover focus-visible:outline-none',
         // §6.3: resaltar la carpeta mientras un archivo se arrastra encima
         isOver && 'bg-accent-tint-bg ring-1 ring-accent hover:bg-accent-tint-bg',
         isDragging && 'opacity-40',
@@ -67,6 +67,7 @@ export function FileRow({
 
       <ItemActionsMenu
         item={item}
+        onOpen={onOpen}
         onDownload={onDownload}
         onRename={onRename}
         onMove={onMove}

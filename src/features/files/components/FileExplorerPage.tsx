@@ -30,6 +30,8 @@ import { useExplorerShortcuts } from '../useExplorerShortcuts'
 import { useFileSelection } from '../useFileSelection'
 import { useFolderPath } from '../useFolderPath'
 import { useViewMode } from '../useViewMode'
+import { MediaViewer } from '../viewer/MediaViewer'
+import { useMediaViewer } from '../viewer/useMediaViewer'
 import { Breadcrumb } from './Breadcrumb'
 import { BulkDeleteModal } from './BulkDeleteModal'
 import { CreateFolderModal } from './CreateFolderModal'
@@ -196,6 +198,8 @@ export function FileExplorerPage() {
   // CLAUDE.md §6.3: selección múltiple — casillas, Ctrl/Cmd+clic, Shift+clic y
   // atajos de teclado. Se acota a la carpeta y a lo visible (useFileSelection).
   const selection = useFileSelection(folderId, visibleItems)
+  // §6.3c: visor de imagen/vídeo — recorre lo visible, así que va tras filtrar y ordenar
+  const viewer = useMediaViewer(visibleItems)
   // Las carpetas no se mueven (solo se arrastran y mueven archivos, §6.3/§7.5).
   const selectedFiles = selection.selectedItems.filter((item) => item.kind === 'file')
 
@@ -225,7 +229,8 @@ export function FileExplorerPage() {
       onSelectAll: selection.selectAll,
       onClear: selection.clear,
     },
-    { enabled: modal === null, hasSelection: selection.count > 0 },
+    // Con el visor abierto, Supr/F2/Ctrl+A no deben actuar sobre la selección de detrás
+    { enabled: modal === null && !viewer.isOpen, hasSelection: selection.count > 0 },
   )
 
   const onDownload = (item: ExplorerItem) => {
@@ -359,6 +364,7 @@ export function FileExplorerPage() {
                 key={`${item.kind}-${item.id}`}
                 item={item}
                 onEnterFolder={enterFolder}
+                onOpen={viewer.open}
                 onDownload={onDownload}
                 onRename={(target) => setModal({ type: 'rename', item: target })}
                 onMove={(target) => setModal({ type: 'move', item: target })}
@@ -370,6 +376,16 @@ export function FileExplorerPage() {
             )
           })}
         </div>
+      )}
+
+      {viewer.isOpen && (
+        <MediaViewer
+          items={viewer.items}
+          index={viewer.index}
+          onIndexChange={viewer.goTo}
+          onClose={viewer.close}
+          onDownload={onDownload}
+        />
       )}
 
       {/* Modales (§6.4) */}
