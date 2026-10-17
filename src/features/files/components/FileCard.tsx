@@ -16,6 +16,7 @@ import { SelectCheckbox } from './SelectCheckbox'
 export function FileCard({
   item,
   onEnterFolder,
+  onOpen,
   onDownload,
   onRename,
   onMove,
@@ -24,8 +25,7 @@ export function FileCard({
   selectionActive,
   onSelect,
 }: ExplorerItemViewProps) {
-  const isFolder = item.kind === 'folder'
-  const { rowProps, isDragging, isOver } = useExplorerItemInteraction({ item, onEnterFolder, onSelect })
+  const { rowProps, isDragging, isOver, isActivatable } = useExplorerItemInteraction({ item, onEnterFolder, onOpen, onSelect })
 
   return (
     <div
@@ -34,8 +34,8 @@ export function FileCard({
         'group flex touch-manipulation select-none flex-col gap-2 rounded-xl p-2 transition-colors hover:bg-row-hover',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
         selected && 'bg-accent-tint-bg hover:bg-accent-tint-bg',
-        // Como en la lista (§6.3): solo las carpetas son clicables
-        isFolder && 'cursor-pointer',
+        // Como en la lista (§6.3, §6.3c): clicables las carpetas y las imágenes/vídeos
+        isActivatable && 'cursor-pointer',
         isOver && 'bg-accent-tint-bg ring-1 ring-accent hover:bg-accent-tint-bg',
         isDragging && 'opacity-40',
       )}
@@ -53,6 +53,7 @@ export function FileCard({
         />
         <ItemActionsMenu
           item={item}
+          onOpen={onOpen}
           onDownload={onDownload}
           onRename={onRename}
           onMove={onMove}
