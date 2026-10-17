@@ -1,4 +1,4 @@
-import { Download, FolderInput, MoreVertical, Pencil, Trash2 } from 'lucide-react'
+import { Download, Eye, FolderInput, MoreVertical, Pencil, Trash2 } from 'lucide-react'
 import type { MouseEvent } from 'react'
 
 import { Button } from '@/shared/components/ui/button'
@@ -11,9 +11,11 @@ import {
 import { cn } from '@/shared/lib/utils'
 
 import type { ExplorerItem } from '../types'
+import { isViewableFile } from '../viewer/media'
 
 type ItemActionsMenuProps = {
   item: ExplorerItem
+  onOpen: (item: ExplorerItem) => void
   onDownload: (item: ExplorerItem) => void
   onRename: (item: ExplorerItem) => void
   onMove: (item: ExplorerItem) => void
@@ -26,13 +28,14 @@ type ItemActionsMenuProps = {
 
 const stop = (event: MouseEvent) => event.stopPropagation()
 
-// Menú contextual: Descargar / Mover a… / Renombrar / Eliminar, común a la fila
+// Menú contextual: Ver (imagen/vídeo) / Descargar / Mover a… / Renombrar / Eliminar, común a la fila
 // de lista y a la tarjeta de miniatura (§6.3b). Mover y renombrar archivos van
 // detrás de FILE_MOVE_ENABLED (§7.5). El contenedor detiene el clic: el
 // contenido del menú va en un portal pero propaga el evento por el árbol de
 // React, y sin esto elegir una acción en una carpeta además entraría en ella.
 export function ItemActionsMenu({
   item,
+  onOpen,
   onDownload,
   onRename,
   onMove,
@@ -58,6 +61,13 @@ export function ItemActionsMenu({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
+          {/* §6.3c: alternativa al clic para abrir el visor (teclado, táctil) */}
+          {isViewableFile(item) && (
+            <DropdownMenuItem onSelect={() => onOpen(item)}>
+              <Eye />
+              Ver
+            </DropdownMenuItem>
+          )}
           {item.kind === 'file' && (
             <>
               <DropdownMenuItem onSelect={() => onDownload(item)}>
