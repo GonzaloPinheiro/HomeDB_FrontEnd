@@ -2,6 +2,7 @@ import { FolderInput, Trash2, X } from 'lucide-react'
 
 import { Button } from '@/shared/components/ui/button'
 
+import { HEADER_ROW_CLASSES } from './explorerLayout'
 import { SelectCheckbox } from './SelectCheckbox'
 
 type SelectionHeaderProps = {
@@ -21,7 +22,7 @@ type SelectionHeaderProps = {
 // acciones de un solo elemento (F2 solo con uno seleccionado).
 export function SelectionHeader({ count, allSelected, canMove, onToggleAll, onMove, onDelete, onClear }: SelectionHeaderProps) {
   return (
-    <div className="flex min-h-9 items-center gap-3 border-b border-border-light px-3 pb-2">
+    <div className={HEADER_ROW_CLASSES}>
       <SelectCheckbox
         checked={allSelected ? true : 'mixed'}
         onToggle={onToggleAll}

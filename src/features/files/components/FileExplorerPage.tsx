@@ -20,7 +20,6 @@ import { Button } from '@/shared/components/ui/button'
 import { Input } from '@/shared/components/ui/input'
 import { useDebounce } from '@/shared/hooks/useDebounce'
 import { useFileDropZone } from '@/shared/hooks/useFileDropZone'
-import { cn } from '@/shared/lib/utils'
 
 import { downloadFile, useBulkMove, useFolderContents, useMoveFile } from '../api'
 import { sortExplorerItems, type SortDirection, type SortKey } from '../sort'
@@ -30,17 +29,21 @@ import { useDwell } from '../useDwell'
 import { useExplorerShortcuts } from '../useExplorerShortcuts'
 import { useFileSelection } from '../useFileSelection'
 import { useFolderPath } from '../useFolderPath'
+import { useViewMode } from '../useViewMode'
 import { Breadcrumb } from './Breadcrumb'
 import { BulkDeleteModal } from './BulkDeleteModal'
 import { CreateFolderModal } from './CreateFolderModal'
 import { DeleteConfirmModal } from './DeleteConfirmModal'
-import { FileListSkeleton } from './FileListSkeleton'
-import { FileRow, ItemIcon } from './FileRow'
+import { ExplorerColumnHeaders } from './ExplorerColumnHeaders'
+import { FileCard } from './FileCard'
+import { FileGridSkeleton, FileListSkeleton } from './FileListSkeleton'
+import { FileRow } from './FileRow'
+import { GRID_CLASSES } from './explorerLayout'
+import { ItemIcon } from './ItemIcon'
 import { MoveFileModal } from './MoveFileModal'
 import { RenameModal } from './RenameModal'
-import { SelectCheckbox } from './SelectCheckbox'
 import { SelectionHeader } from './SelectionHeader'
-import { SortableHeader } from './SortableHeader'
+import { ViewModeToggle } from './ViewModeToggle'
 
 const ROOT: Crumb = { id: null, name: 'Archivos' }
 
@@ -73,6 +76,8 @@ export function FileExplorerPage() {
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
   const [search, setSearch] = useState('')
   const [modal, setModal] = useState<ModalState>(null)
+  // CLAUDE.md §6.3b: lista (iconos) o miniaturas, recordado en este dispositivo
+  const [viewMode, setViewMode] = useViewMode()
 
   // CLAUDE.md §11: buscador con debounce para no refiltrar en cada tecla
   const debouncedSearch = useDebounce(search)
@@ -265,6 +270,7 @@ export function FileExplorerPage() {
         <div className="min-w-0 flex-1">
           <Breadcrumb crumbs={displayTrail} onNavigate={goToCrumb} />
         </div>
+        <ViewModeToggle value={viewMode} onChange={setViewMode} />
         <Input
           value={search}
           onChange={(event) => setSearch(event.target.value)}
@@ -296,46 +302,19 @@ export function FileExplorerPage() {
           onClear={selection.clear}
         />
       ) : (
-        <div className="flex min-h-9 items-center gap-3 border-b border-border-light px-3 pb-2">
-          {/* Casilla de cabecera: seleccionar todo lo visible */}
-          <SelectCheckbox
-            checked={false}
-            onToggle={selection.toggleAll}
-            label="Seleccionar todo"
-            className={cn(visibleItems.length === 0 && 'pointer-events-none opacity-40')}
-          />
-          <span className="w-5 shrink-0" aria-hidden />
-          <SortableHeader
-            label="Nombre"
-            sortKey="name"
-            activeKey={sortKey}
-            direction={sortDirection}
-            onSort={onSort}
-            className="min-w-0 flex-1"
-          />
-          <SortableHeader
-            label="Tamaño"
-            sortKey="size"
-            activeKey={sortKey}
-            direction={sortDirection}
-            onSort={onSort}
-            className="hidden w-20 shrink-0 justify-end sm:flex"
-          />
-          <SortableHeader
-            label="Fecha"
-            sortKey="date"
-            activeKey={sortKey}
-            direction={sortDirection}
-            onSort={onSort}
-            className="hidden w-24 shrink-0 justify-end md:flex"
-          />
-          <span className="w-8 shrink-0" aria-hidden />
-        </div>
+        <ExplorerColumnHeaders
+          viewMode={viewMode}
+          visibleCount={visibleItems.length}
+          sortKey={sortKey}
+          sortDirection={sortDirection}
+          onSort={onSort}
+          onToggleAll={selection.toggleAll}
+        />
       )}
 
       {/* Lista */}
       {contents.isPending ? (
-        <FileListSkeleton />
+        viewMode === 'grid' ? <FileGridSkeleton /> : <FileListSkeleton />
       ) : contents.data === undefined ? (
         <EmptyState
           icon={CircleAlert}
@@ -371,21 +350,25 @@ export function FileExplorerPage() {
           }
         />
       ) : (
-        <div className="flex flex-col">
-          {visibleItems.map((item) => (
-            <FileRow
-              key={`${item.kind}-${item.id}`}
-              item={item}
-              onEnterFolder={enterFolder}
-              onDownload={onDownload}
-              onRename={(target) => setModal({ type: 'rename', item: target })}
-              onMove={(target) => setModal({ type: 'move', item: target })}
-              onDelete={(target) => setModal({ type: 'delete', item: target })}
-              selected={selection.isSelected(item)}
-              selectionActive={selection.count > 0}
-              onSelect={selection.select}
-            />
-          ))}
+        <div className={viewMode === 'grid' ? GRID_CLASSES : 'flex flex-col'}>
+          {visibleItems.map((item) => {
+            // Mismas props en ambos modos: solo cambia la presentación (§6.3b)
+            const ItemView = viewMode === 'grid' ? FileCard : FileRow
+            return (
+              <ItemView
+                key={`${item.kind}-${item.id}`}
+                item={item}
+                onEnterFolder={enterFolder}
+                onDownload={onDownload}
+                onRename={(target) => setModal({ type: 'rename', item: target })}
+                onMove={(target) => setModal({ type: 'move', item: target })}
+                onDelete={(target) => setModal({ type: 'delete', item: target })}
+                selected={selection.isSelected(item)}
+                selectionActive={selection.count > 0}
+                onSelect={selection.select}
+              />
+            )
+          })}
         </div>
       )}
 
