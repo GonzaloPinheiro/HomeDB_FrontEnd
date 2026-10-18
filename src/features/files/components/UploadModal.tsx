@@ -1,4 +1,16 @@
-import { Ban, Check, ChevronDown, ChevronRight, CircleAlert, Folder, Hourglass, RotateCcw, Upload, X } from 'lucide-react'
+import {
+  Ban,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  CircleAlert,
+  Folder,
+  Hourglass,
+  Loader2,
+  RotateCcw,
+  Upload,
+  X,
+} from 'lucide-react'
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 
 import { Modal } from '@/shared/components/Modal'
@@ -26,7 +38,8 @@ import type { ChunkStatus, UploadQueueEntry } from '../uploadQueue/types'
 // cuanto hay hueco (§7.4) — la ventana de "quitarlo antes de subir" que daba
 // ese botón queda cubierta de sobra por poder cancelar cualquier entrada en
 // cualquier momento (en cola o ya subiendo), algo que el diseño anterior no
-// permitía una vez pulsado "Subir".
+// permitía una vez pulsado "Subir". Una vez enviados todos los fragmentos la
+// fila pasa a "Procesando" y ya no se puede cancelar (§7.4).
 export function UploadModal() {
   const {
     entries,
@@ -56,7 +69,10 @@ export function UploadModal() {
     onFiles: (files) => addFiles(files),
   })
 
-  const activeCount = entries.filter((e) => e.status === 'queued' || e.status === 'uploading').length
+  // 'processing' cuenta como activa: el archivo aún no está disponible (§7.4).
+  const activeCount = entries.filter(
+    (e) => e.status === 'queued' || e.status === 'uploading' || e.status === 'processing',
+  ).length
   const doneCount = entries.filter((e) => e.status === 'done').length
   // Solo 'error': las 'cancelled' las canceló el usuario a propósito, no "fallaron".
   const failedCount = entries.filter((e) => e.status === 'error').length
@@ -236,6 +252,13 @@ function UploadEntryRow({ entry, expanded, onToggleExpand, onCancel, onRetry, on
             </div>
           )}
           {entry.status === 'uploading' && <UploadSpeedLine entry={entry} />}
+          {/* CLAUDE.md §7.4: todos los fragmentos ya están en el servidor, que ensambla y valida el archivo en segundo plano */}
+          {entry.status === 'processing' && (
+            <span role="status" className="mt-1 flex items-center gap-1 text-xs text-text-secondary">
+              <Loader2 className="h-3 w-3 shrink-0 animate-spin text-accent" aria-hidden />
+              Procesando en el servidor…
+            </span>
+          )}
           {entry.status === 'error' && (
             <span className="flex items-center gap-1 text-xs text-critical-text">
               <CircleAlert className="h-3 w-3 shrink-0" aria-hidden />

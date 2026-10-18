@@ -14,7 +14,8 @@ export const MAX_RATE_LIMIT_PAUSES = 5
 // Cota a un Retry-After disparatado (cabecera mal formada o reloj desajustado).
 const MAX_PAUSE_MS = 5 * 60_000
 
-function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
+/** Espera `ms` o rechaza con AbortError si `signal` se aborta antes (cancelar una entrada que espera). */
+export function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) {
       reject(new DOMException('Aborted', 'AbortError'))
@@ -79,7 +80,7 @@ export class RateLimitGate {
  * propia petición recibe un 429 la activa y la reintenta cuando termine, sin
  * contarlo como fallo del archivo. Un 429 no consume tokens del rate limiter
  * (lo rechaza el middleware antes de llegar al controller), así que repetir la
- * petición — incluso `complete`, que no es idempotente — es seguro.
+ * petición es seguro.
  */
 export async function withRateLimitRetry<T>(
   gate: RateLimitGate,

@@ -1,7 +1,12 @@
 import { api, isRateLimitError, toApiError, unwrap } from '@/shared/api/client'
 import type { ApiObjResponse } from '@/shared/types/api'
 
-import { uploadCompleteResponseSchema, uploadInitResponseSchema, uploadStatusResponseSchema } from '../types'
+import {
+  uploadCompleteResponseSchema,
+  uploadInitResponseSchema,
+  uploadStatusResponseSchema,
+  type UploadStatusResponse,
+} from '../types'
 
 // CLAUDE.md §7.4: límite de la petición de chunk en el backend
 // (UploadController.ReceiveChunkAsync: `[RequestSizeLimit(35_000_000)]`, en bytes
@@ -196,26 +201,31 @@ export async function uploadChunkWithRetry(
   }
 }
 
-/** GET /files/upload/{sessionId}/status — usado solo para reanudar tras un error (§7.4), nunca en el camino feliz. */
-export async function getUploadStatus(sessionId: string, signal: AbortSignal): Promise<number[]> {
+/**
+ * GET /files/upload/{sessionId}/status. Dos usos (CLAUDE.md §7.4): al reanudar
+ * una entrada con sesión (qué chunks tiene ya el servidor y en qué estado está
+ * la sesión) y, tras `complete`, en bucle (completion.ts) hasta que el worker
+ * en background termina de ensamblar.
+ */
+export async function getUploadStatus(sessionId: string, signal: AbortSignal): Promise<UploadStatusResponse> {
   const response = await api.get<ApiObjResponse<unknown>>(`/files/upload/${sessionId}/status`, { signal })
-  return uploadStatusResponseSchema.parse(unwrap(response.data)).receivedChunks
+  return uploadStatusResponseSchema.parse(unwrap(response.data))
 }
 
 /**
- * POST /files/upload/{sessionId}/complete — puede devolver el DTO o un string si ya estaba completada (ver uploadCompleteResponseSchema).
+ * POST /files/upload/{sessionId}/complete — solo ENCOLA el ensamblado: el backend
+ * valida que lleguen todos los chunks, marca la sesión como `Processing` y
+ * responde 202 al instante; el archivo se ensambla en un worker en background
+ * (UploadCompletionQueue). El resultado (archivo creado o motivo del fallo) se
+ * consulta con GET /status — ver completion.ts. Es idempotente: repetirlo con la
+ * sesión ya en proceso o completada vuelve a dar 202 sin reencolar.
  *
- * CLAUDE.md §7.4: sin timeout. El servidor responde solo cuando termina de
- * concatenar los chunks y copiar el archivo a su destino final, algo que con
- * archivos de decenas de GB tarda minutos. Con el timeout de 30s por defecto de
- * `api`, el front cortaba la petición a mitad de ensamblado y el backend (que
- * usa el CancellationToken de la request) cancelaba la sesión y borraba todos
- * los chunks ya subidos.
+ * CLAUDE.md §7.4: ya NO va sin timeout (antes bloqueaba hasta ensamblar, minutos
+ * con decenas de GB, y un timeout o el límite de ~100s de Cloudflare cancelaba la
+ * sesión). Ahora usa el timeout por defecto de `api`: tarda lo que una petición
+ * JSON normal.
  */
-export async function completeUploadSession(sessionId: string, signal: AbortSignal) {
-  const response = await api.post<ApiObjResponse<unknown>>(`/files/upload/${sessionId}/complete`, undefined, {
-    signal,
-    timeout: 0,
-  })
-  return uploadCompleteResponseSchema.parse(unwrap(response.data))
+export async function completeUploadSession(sessionId: string, signal: AbortSignal): Promise<void> {
+  const response = await api.post<ApiObjResponse<unknown>>(`/files/upload/${sessionId}/complete`, undefined, { signal })
+  uploadCompleteResponseSchema.parse(unwrap(response.data))
 }

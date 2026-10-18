@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+import { wireEnum } from '@/shared/lib/wireEnum'
+
 // Forma real verificada contra HomeDB.Domain.Entities.BackupAuditEntry,
 // HomeDB.Application.DTOs.BackupDTOs y BackupController (CLAUDE.md §5.4).
 //
@@ -8,7 +10,7 @@ import { z } from 'zod'
 // JsonStringEnumConverter (`AddControllers()` sin opciones). Se aceptan también
 // sus nombres como string por tolerancia — si el backend añade el converter
 // más adelante, el front no se rompe — y se normalizan a una unión de literales
-// para no propagar números mágicos por los componentes.
+// para no propagar números mágicos por los componentes (`wireEnum`, shared/lib).
 
 export type BackupStatus = 'running' | 'success' | 'failed'
 export type BackupLevel = 'daily' | 'monthly'
@@ -29,17 +31,8 @@ const LEVEL_BY_WIRE = {
   Monthly: 'monthly',
 } as const satisfies Record<string, BackupLevel>
 
-const backupStatusSchema = z
-  .union([z.number(), z.string()])
-  .transform((value) => String(value))
-  .pipe(z.enum(Object.keys(STATUS_BY_WIRE) as [keyof typeof STATUS_BY_WIRE, ...Array<keyof typeof STATUS_BY_WIRE>]))
-  .transform((wire): BackupStatus => STATUS_BY_WIRE[wire])
-
-const backupLevelSchema = z
-  .union([z.number(), z.string()])
-  .transform((value) => String(value))
-  .pipe(z.enum(Object.keys(LEVEL_BY_WIRE) as [keyof typeof LEVEL_BY_WIRE, ...Array<keyof typeof LEVEL_BY_WIRE>]))
-  .transform((wire): BackupLevel => LEVEL_BY_WIRE[wire])
+const backupStatusSchema = wireEnum<BackupStatus>(STATUS_BY_WIRE)
+const backupLevelSchema = wireEnum<BackupLevel>(LEVEL_BY_WIRE)
 
 // `GET /backup/history` e `POST /backup/{level}/trigger` devuelven la entidad
 // `BackupAuditEntry` directamente, no un DTO propio.

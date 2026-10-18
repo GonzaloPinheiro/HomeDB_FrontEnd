@@ -1,6 +1,6 @@
 // CLAUDE.md §5.1: mapa completo de ApiErrorCodes -> mensaje. Único punto de
 // verdad de toda la app — no reimplementar por feature. Verificado contra el
-// enum real del backend (HomeDB.Domain/Common/ApiErrorCodes.cs, julio 2026):
+// enum real del backend (HomeDB.Domain/Common/ApiErrorCodes.cs, octubre 2026):
 // coincide 1:1 con la tabla de §5.1.
 export const ApiErrorCodes = {
   FileNotFound: 1001,
@@ -29,6 +29,9 @@ export const ApiErrorCodes = {
   InvalidChunkNumber: 1022,
   AssembledFileSizeMismatch: 1023,
   InvalidUploadRequest: 1024,
+  // Extensión fuera de la lista blanca o contenido que no coincide con ella;
+  // llega por GET /status (`errorCode` de una sesión cancelada) o como error HTTP.
+  InvalidFileExtension: 1027,
   // CLAUDE.md §5.4: subsistema de backups (BackupController) — verificados
   // contra HomeDB.Domain/Common/ApiErrorCodes.cs y ExceptionHandlerMiddleware.
   BackupAlreadyRunning: 1025,
@@ -61,6 +64,8 @@ const ERROR_MESSAGES: Record<number, string> = {
   [ApiErrorCodes.InvalidChunkNumber]: 'Fragmento fuera de rango para esta subida',
   [ApiErrorCodes.AssembledFileSizeMismatch]: 'El archivo ensamblado no coincide con el tamaño esperado — reintenta la subida',
   [ApiErrorCodes.InvalidUploadRequest]: 'Los datos para iniciar la subida no son válidos',
+  [ApiErrorCodes.InvalidFileExtension]:
+    'El tipo de archivo no está permitido o su contenido no coincide con su extensión',
   [ApiErrorCodes.BackupAlreadyRunning]: 'Ya hay un backup en curso — espera a que termine',
   [ApiErrorCodes.BackupLevelNotSupported]: 'Este tipo de backup todavía no está disponible',
   [ApiErrorCodes.InternalError]: 'Error inesperado del servidor',
