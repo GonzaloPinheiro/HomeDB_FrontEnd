@@ -7,6 +7,12 @@ import { ApiErrorCodes } from '@/shared/api/errors'
 
 import { filesKeys } from '../api'
 import { getExtension, isAllowedExtension } from './allowedExtensions'
+import {
+  ProcessingTimeoutError,
+  UploadSessionEndedError,
+  processingTimeoutMs,
+  waitForUploadCompletion,
+} from './completion'
 import { AsyncSemaphore, runWithConcurrency } from './concurrency'
 import {
   CHUNK_SIZE_BYTES,
@@ -80,6 +86,10 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
   // Estado imperativo que no necesita disparar un render por sí mismo.
   const controllersRef = useRef(new Map<string, AbortController>())
   const startedRef = useRef(new Set<string>())
+  // Entradas esperando el resultado del ensamblado en background (id -> tamaño del
+  // archivo), en orden de llegada: da el nº de esperas simultáneas (cadencia de
+  // consultas) y lo que tenía delante cada una (plazo de espera) — completion.ts.
+  const processingBytesRef = useRef(new Map<string, number>())
 
   const patchEntry = useCallback((id: string, patch: Partial<UploadQueueEntry>) => {
     setEntries((current) => current.map((entry) => (entry.id === id ? { ...entry, ...patch } : entry)))
@@ -98,8 +108,6 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
       const controller = new AbortController()
       controllersRef.current.set(entry.id, controller)
       const plan = computeChunkPlan(entry.file.size)
-      // Refresco de velocidad/bytes (~1/s) mientras se envían chunks; se limpia en `finally`.
-      let speedTimer: ReturnType<typeof setInterval> | undefined
       // Toda petición HTTP del pipeline pasa por aquí: respeta la pausa global y
       // ante un 429 la activa y reintenta sin dar el archivo por fallido. Recibe
       // el signal porque las peticiones de chunk usan el del pool (se aborta si
@@ -107,38 +115,13 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
       const limited = <T,>(request: () => Promise<T>, signal: AbortSignal = controller.signal): Promise<T> =>
         withRateLimitRetry(rateLimitGate, signal, request)
 
-      try {
-        let alreadyReceived: number[] = []
-        // `const` (y no reasignado) para que las closures de abajo conserven el tipo `string`.
-        const sessionId: string =
-          entry.sessionId ??
-          (await limited(() =>
-            initUploadSession(
-              {
-                fileName: entry.file.name,
-                totalSizeBytes: entry.file.size,
-                totalChunks: plan.totalChunks,
-                folderId: entry.folderId,
-              },
-              controller.signal,
-            ),
-          ))
-
-        if (!entry.sessionId) {
-          patchEntry(entry.id, {
-            sessionId,
-            totalChunks: plan.totalChunks,
-            chunks: Array<UploadQueueEntry['chunks'][number]>(plan.totalChunks).fill('pending'),
-          })
-        } else {
-          // Reintento (§7.4): reanuda preguntando qué llegó ya en vez de repetirlo.
-          alreadyReceived = await limited(() => getUploadStatus(sessionId, controller.signal))
-          patchEntry(entry.id, {
-            chunks: Array.from({ length: plan.totalChunks }, (_, i) =>
-              alreadyReceived.includes(i + 1) ? 'done' : 'pending',
-            ),
-          })
-        }
+      // Envía los chunks que el servidor aún no tiene (todos en una subida nueva).
+      const sendMissingChunks = async (sessionId: string, alreadyReceived: number[]) => {
+        patchEntry(entry.id, {
+          chunks: Array.from({ length: plan.totalChunks }, (_, i) =>
+            alreadyReceived.includes(i + 1) ? 'done' : 'pending',
+          ),
+        })
 
         // Bytes ya enviados de cada chunk (tamaño completo si está confirmado).
         // Con chunks en paralelo cada uno avanza por su cuenta, por eso el
@@ -167,56 +150,127 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
 
         // La velocidad se refresca por reloj y no por evento de progreso: si la subida
         // se atasca no llegan eventos y el valor se quedaría congelado (speed.ts la hace caer).
-        speedTimer = setInterval(() => {
+        const speedTimer = setInterval(() => {
           patchEntry(entry.id, {
             uploadedBytes: loadedBytesTotal(plan.chunkSizes, loadedBytes),
             speedBytesPerSec: speedTracker.bytesPerSecond(Date.now()),
           })
         }, 1000)
 
-        // CLAUDE.md §7.4: los chunks pendientes se reparten entre hasta
-        // MAX_PARALLEL_CHUNK_UPLOADS workers (con el tope global de chunkSlots). Si
-        // uno falla del todo, se aborta el resto y se propaga ese primer error.
-        await runWithConcurrency(
-          pendingChunks,
-          { concurrency: MAX_PARALLEL_CHUNK_UPLOADS, semaphore: chunkSlots, signal: controller.signal },
-          async (chunkNumber, chunkSignal) => {
-            const index = chunkNumber - 1
-            const start = index * CHUNK_SIZE_BYTES
-            const blob = entry.file.slice(start, start + plan.chunkSizes[index])
+        try {
+          // CLAUDE.md §7.4: los chunks pendientes se reparten entre hasta
+          // MAX_PARALLEL_CHUNK_UPLOADS workers (con el tope global de chunkSlots). Si
+          // uno falla del todo, se aborta el resto y se propaga ese primer error.
+          await runWithConcurrency(
+            pendingChunks,
+            { concurrency: MAX_PARALLEL_CHUNK_UPLOADS, semaphore: chunkSlots, signal: controller.signal },
+            async (chunkNumber, chunkSignal) => {
+              const index = chunkNumber - 1
+              const start = index * CHUNK_SIZE_BYTES
+              const blob = entry.file.slice(start, start + plan.chunkSizes[index])
 
-            setChunkStatus(entry.id, index, 'uploading')
-            try {
-              await limited(() => {
-                // Si la petición se repite (tras una pausa por 429) arranca de cero.
+              setChunkStatus(entry.id, index, 'uploading')
+              try {
+                await limited(() => {
+                  // Si la petición se repite (tras una pausa por 429) arranca de cero.
+                  loadedBytes[index] = 0
+                  return uploadChunkWithRetry(sessionId, chunkNumber, blob, chunkSignal, (chunkLoadedBytes) => {
+                    loadedBytes[index] = chunkLoadedBytes
+                    reportProgress()
+                  })
+                }, chunkSignal)
+              } catch (error) {
+                // Con el signal ya abortado el chunk no ha fallado: lo abortó la
+                // cancelación del usuario o el fallo de OTRO chunk, y sigue pendiente.
                 loadedBytes[index] = 0
-                return uploadChunkWithRetry(sessionId, chunkNumber, blob, chunkSignal, (chunkLoadedBytes) => {
-                  loadedBytes[index] = chunkLoadedBytes
-                  reportProgress()
-                })
-              }, chunkSignal)
-            } catch (error) {
-              // Con el signal ya abortado el chunk no ha fallado: lo abortó la
-              // cancelación del usuario o el fallo de OTRO chunk, y sigue pendiente.
-              loadedBytes[index] = 0
-              setChunkStatus(entry.id, index, chunkSignal.aborted ? 'pending' : 'error')
+                setChunkStatus(entry.id, index, chunkSignal.aborted ? 'pending' : 'error')
+                reportProgress()
+                throw error
+              }
+
+              loadedBytes[index] = plan.chunkSizes[index]
+              setChunkStatus(entry.id, index, 'done')
               reportProgress()
-              throw error
-            }
+            },
+          )
+        } finally {
+          clearInterval(speedTimer)
+        }
+      }
 
-            loadedBytes[index] = plan.chunkSizes[index]
-            setChunkStatus(entry.id, index, 'done')
-            reportProgress()
-          },
-        )
+      try {
+        // Reintento (§7.4): si la entrada ya tenía sesión, el servidor dice en qué
+        // punto quedó (faltan chunks / ya ensamblando / ya terminada) en vez de
+        // repetir nada a ciegas. `const` para que las closures conserven el tipo `string`.
+        const existingSessionId = entry.sessionId
+        const resumedStatus = existingSessionId
+          ? await limited(() => getUploadStatus(existingSessionId, controller.signal))
+          : null
 
-        await limited(() => completeUploadSession(sessionId, controller.signal))
+        if (resumedStatus?.status === 'cancelled') throw new UploadSessionEndedError(resumedStatus.errorCode)
+
+        const sessionId: string =
+          existingSessionId ??
+          (await limited(() =>
+            initUploadSession(
+              {
+                fileName: entry.file.name,
+                totalSizeBytes: entry.file.size,
+                totalChunks: plan.totalChunks,
+                folderId: entry.folderId,
+              },
+              controller.signal,
+            ),
+          ))
+        if (!existingSessionId) patchEntry(entry.id, { sessionId, totalChunks: plan.totalChunks })
+
+        // La sesión puede estar ya en 'processing' (se reintenta tras perder la
+        // respuesta de `complete`, o tras un fallo de red mientras se esperaba) o
+        // incluso 'completed': entonces no queda nada que subir ni que encolar.
+        if (resumedStatus?.status !== 'processing' && resumedStatus?.status !== 'completed') {
+          await sendMissingChunks(sessionId, resumedStatus?.receivedChunks ?? [])
+          // Solo ENCOLA el ensamblado y responde 202 (pipeline.ts) — ya no hay que
+          // esperarlo con la petición abierta.
+          await limited(() => completeUploadSession(sessionId, controller.signal))
+        }
+
+        if (resumedStatus?.status !== 'completed') {
+          // Todo está en el servidor: la entrada deja de ocupar hueco de subida
+          // (el planificador arranca la siguiente) y pasa a esperar el resultado.
+          const backlogBytes = [...processingBytesRef.current.values()].reduce((sum, bytes) => sum + bytes, 0)
+          processingBytesRef.current.set(entry.id, entry.file.size)
+          patchEntry(entry.id, {
+            status: 'processing',
+            progress: 100,
+            uploadedBytes: entry.file.size,
+            speedBytesPerSec: null,
+            totalChunks: plan.totalChunks,
+            chunks: Array<UploadQueueEntry['chunks'][number]>(plan.totalChunks).fill('done'),
+          })
+
+          await waitForUploadCompletion({
+            fetchStatus: () => limited(() => getUploadStatus(sessionId, controller.signal)),
+            signal: controller.signal,
+            timeoutMs: processingTimeoutMs(entry.file.size, backlogBytes),
+            waitingEntries: () => processingBytesRef.current.size,
+          })
+        }
+
         patchEntry(entry.id, { status: 'done', progress: 100, uploadedBytes: entry.file.size, speedBytesPerSec: null })
         void queryClient.invalidateQueries({ queryKey: filesKeys.contents(entry.folderId) })
         void queryClient.invalidateQueries({ queryKey: filesKeys.storageUsage })
       } catch (error) {
         if (controller.signal.aborted) {
           patchEntry(entry.id, { status: 'cancelled', speedBytesPerSec: null })
+        } else if (error instanceof ProcessingTimeoutError) {
+          // Sin código de la API y sin ser un fallo de red: no se reintenta solo
+          // (types.ts). La sesión se conserva: "Reintentar" vuelve a mirar su estado.
+          patchEntry(entry.id, {
+            status: 'error',
+            speedBytesPerSec: null,
+            error: error.message,
+            errorCode: undefined,
+          })
         } else {
           // Los fragmentos en vuelo ya se resolvieron en su tarea (error / pendiente),
           // así que ninguno se queda "subiendo" (pulsando) para siempre en la tira de §6.4.
@@ -227,11 +281,12 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
           // StorageLimitExceeded...) es un rechazo real del servidor: seguirá
           // fallando igual aunque vuelva la conexión, así que no se reintenta
           // solo, se deja para que el usuario decida.
-          // Sesión muerta en el servidor (cancelada, p. ej. porque falló el
-          // ensamblado en `complete`, o inexistente): reanudarla con GET /status
+          // Sesión muerta en el servidor (cancelada —p. ej. porque falló el
+          // ensamblado en background—, o inexistente): reanudarla con GET /status
           // nunca funcionaría, así que se descarta el sessionId y el próximo
           // reintento empieza una subida nueva en vez de fallar siempre igual.
           const isDeadSession =
+            error instanceof UploadSessionEndedError ||
             apiError.errorCode === ApiErrorCodes.UploadSessionNotActive ||
             apiError.errorCode === ApiErrorCodes.UploadSessionNotFound
           patchEntry(entry.id, {
@@ -245,7 +300,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
           })
         }
       } finally {
-        clearInterval(speedTimer)
+        processingBytesRef.current.delete(entry.id)
         controllersRef.current.delete(entry.id)
       }
     },
@@ -282,6 +337,8 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
   // Aviso nativo si se cierra/recarga la pestaña con subidas en curso — cerrar
   // el PANEL nunca pierde nada (§6.5), pero cerrar la pestaña del navegador sí
   // (fuera de alcance la reanudación entre recargas, ver CLAUDE.md §7.4).
+  // 'processing' queda fuera a propósito: con todos los chunks ya en el servidor,
+  // el worker en background termina el archivo aunque se cierre la pestaña.
   useEffect(() => {
     const hasActive = entries.some((e) => e.status === 'queued' || e.status === 'uploading')
     if (!hasActive) return
@@ -303,8 +360,9 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
     (files: File[], target: UploadTarget | null = activeTarget): number => {
       if (!target) return 0
 
-      // CLAUDE.md §5.4: el backend solo valida la extensión al final de la subida;
-      // se rechaza aquí para no subir un archivo grande entero y perderlo en `complete`.
+      // CLAUDE.md §5.4: el backend solo valida la extensión al final de la subida
+      // (al ensamblar, en background); se rechaza aquí para no subir un archivo
+      // grande entero y perderlo al final.
       const accepted = files.filter((file) => isAllowedExtension(file.name))
       const rejected = files.filter((file) => !isAllowedExtension(file.name))
       if (rejected.length > 0) {
@@ -341,6 +399,11 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
 
   const cancelEntry = useCallback(
     (id: string) => {
+      // Una entrada en 'processing' ya no se puede cancelar: todos los chunks
+      // están en el servidor y su worker en background terminará el archivo
+      // igualmente (no hay endpoint para pararlo, §5.4). Marcarla 'cancelada'
+      // mentiría: el archivo acabaría apareciendo en la carpeta.
+      if (entries.find((entry) => entry.id === id)?.status === 'processing') return
       const controller = controllersRef.current.get(id)
       if (controller) {
         controller.abort() // el catch de runPipeline marca 'cancelled'
@@ -348,7 +411,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
         patchEntry(id, { status: 'cancelled' }) // aún en cola, no había arrancado
       }
     },
-    [patchEntry],
+    [entries, patchEntry],
   )
 
   const retryEntry = useCallback(

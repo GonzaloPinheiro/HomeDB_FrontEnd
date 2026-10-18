@@ -1,4 +1,11 @@
-export type UploadEntryStatus = 'queued' | 'uploading' | 'done' | 'error' | 'cancelled'
+/**
+ * `processing`: todos los chunks están en el servidor y `complete` ya fue aceptado
+ * (202); el backend ensambla el archivo en background y el front espera el
+ * resultado con GET /status (CLAUDE.md §7.4). Ya no ocupa hueco de subida ni se
+ * puede cancelar (no hay endpoint para parar el worker), y cerrar la pestaña no
+ * pierde nada: el servidor lo termina igualmente.
+ */
+export type UploadEntryStatus = 'queued' | 'uploading' | 'processing' | 'done' | 'error' | 'cancelled'
 
 /** Estado visual de un chunk individual — CLAUDE.md §6.4: detalle expandible por archivo. */
 export type ChunkStatus = 'pending' | 'uploading' | 'done' | 'error'
@@ -28,7 +35,9 @@ export type UploadQueueEntry = {
    * respuesta real del backend (corte de red, stall, timeout — ver toApiError).
    * CLAUDE.md §7.4: distingue un error de red (se reintenta solo al volver la
    * conexión) de un rechazo real del servidor (FileTooLarge, etc. — reintentar
-   * solo no lo arregla, hace falta acción del usuario).
+   * solo no lo arregla, hace falta acción del usuario). `undefined` = tampoco hay
+   * código de la API, pero el fallo no es de red (se agotó el plazo de espera del
+   * procesado, ProcessingTimeoutError): tampoco se reintenta solo.
    */
   errorCode?: number | null
 }

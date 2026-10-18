@@ -20,8 +20,11 @@ export function UploadTray() {
 
   const activeEntries = entries.filter((e) => e.status === 'uploading' || e.status === 'queued')
   const uploadingEntries = entries.filter((e) => e.status === 'uploading')
+  // CLAUDE.md §7.4: ya enviados por completo, el servidor los ensambla en segundo plano.
+  const processingCount = entries.filter((e) => e.status === 'processing').length
   const errorCount = entries.filter((e) => e.status === 'error').length
   const isActive = activeEntries.length > 0
+  const isBusy = isActive || processingCount > 0
 
   const avgProgress = uploadingEntries.length
     ? Math.round(uploadingEntries.reduce((sum, e) => sum + e.progress, 0) / uploadingEntries.length)
@@ -31,11 +34,19 @@ export function UploadTray() {
   const totalSpeed = uploadingEntries.reduce((sum, e) => sum + (e.speedBytesPerSec ?? 0), 0)
   const speedLabel = totalSpeed > 0 ? ` · ${formatBytes(totalSpeed)}/s` : ''
 
-  const label = isActive
-    ? `Subiendo ${activeEntries.length} ${activeEntries.length === 1 ? 'archivo' : 'archivos'} · ${avgProgress}%${speedLabel}`
-    : errorCount > 0
-      ? `${errorCount} ${errorCount === 1 ? 'archivo' : 'archivos'} con error al subir`
-      : `${entries.length} ${entries.length === 1 ? 'archivo subido' : 'archivos subidos'}`
+  const files = (count: number) => `${count} ${count === 1 ? 'archivo' : 'archivos'}`
+
+  let label: string
+  if (isActive) {
+    const processingSuffix = processingCount > 0 ? ` · ${processingCount} en proceso` : ''
+    label = `Subiendo ${files(activeEntries.length)} · ${avgProgress}%${speedLabel}${processingSuffix}`
+  } else if (processingCount > 0) {
+    label = `Procesando ${files(processingCount)} en el servidor`
+  } else if (errorCount > 0) {
+    label = `${files(errorCount)} con error al subir`
+  } else {
+    label = `${entries.length} ${entries.length === 1 ? 'archivo subido' : 'archivos subidos'}`
+  }
 
   return (
     <button
@@ -43,7 +54,7 @@ export function UploadTray() {
       onClick={() => openPanel()}
       className="fixed bottom-4 right-4 z-40 flex items-center gap-2 rounded-full border border-border bg-card px-4 py-2.5 text-sm text-text-primary shadow-md transition-colors hover:bg-surface-alt"
     >
-      {isActive ? (
+      {isBusy ? (
         <Loader2 className="h-4 w-4 shrink-0 animate-spin text-accent" aria-hidden />
       ) : errorCount > 0 ? (
         <CircleAlert className="h-4 w-4 shrink-0 text-critical-text" aria-hidden />

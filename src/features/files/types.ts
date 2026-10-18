@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+import { wireEnum } from '@/shared/lib/wireEnum'
+
 // Formas reales de los DTOs del backend (verificadas contra FilesDtos.cs,
 // FoldersDTOs.cs, StatisticsDTOs.cs y UserSettingsDTOs.cs en julio 2026),
 // serializadas en camelCase (CLAUDE.md §5.1).
@@ -34,23 +36,49 @@ export const uploadFileResponseSchema = z.object({
 })
 
 // CLAUDE.md §5.4/§7.4: subida por chunks — formas reales de UploadDTOs.cs
-// (UploadController, verificado julio 2026).
+// (UploadController, verificado octubre 2026, tras pasar `complete` a una cola
+// en background).
 export const uploadInitResponseSchema = z.object({
   sessionId: z.string(),
+})
+
+/**
+ * Estado de la sesión de subida en el backend (`UploadSessionStatus`:
+ * InProgress=1, Completed=2, Cancelled=3, Processing=4). Llega como número —
+ * ver `wireEnum`. `processing` = todos los chunks recibidos y `complete` ya
+ * aceptado, ensamblando en background; `completed` y `cancelled` son terminales.
+ */
+export type UploadSessionStatus = 'inProgress' | 'processing' | 'completed' | 'cancelled'
+
+const uploadSessionStatusSchema = wireEnum<UploadSessionStatus>({
+  '1': 'inProgress',
+  InProgress: 'inProgress',
+  '4': 'processing',
+  Processing: 'processing',
+  '2': 'completed',
+  Completed: 'completed',
+  '3': 'cancelled',
+  Cancelled: 'cancelled',
 })
 
 export const uploadStatusResponseSchema = z.object({
   sessionId: z.string(),
   totalChunks: z.number(),
   receivedChunks: z.number().array(),
+  status: uploadSessionStatusSchema,
+  // Solo con status = completed: el archivo creado por el worker.
+  file: uploadFileResponseSchema.nullable(),
+  // Solo con status = cancelled y fallo del ensamblado/validación: por qué falló
+  // (AssembledFileSizeMismatch, InvalidFileExtension, InternalError). Una sesión
+  // cancelada por superar el tamaño máximo en un chunk llega SIN código.
+  errorCode: z.number().nullable(),
 })
+export type UploadStatusResponse = z.infer<typeof uploadStatusResponseSchema>
 
-// POST /files/upload/{sessionId}/complete devuelve el UploadFileResponseDto
-// normal, EXCEPTO si la sesión ya estaba completada (llamada duplicada), caso
-// en que el backend responde con un simple string informativo en `data` en
-// vez del DTO (UploadController.CompleteUploadAsync) — hay que contemplar
-// ambas formas.
-export const uploadCompleteResponseSchema = z.union([uploadFileResponseSchema, z.string()])
+// POST /files/upload/{sessionId}/complete ya no devuelve el archivo: responde
+// 202 con un mensaje informativo y el ensamblado ocurre en background. El
+// resultado se consulta con GET /status (uploadStatusResponseSchema).
+export const uploadCompleteResponseSchema = z.string()
 
 export const deleteFileResponseSchema = z.object({
   fileId: z.number(),
