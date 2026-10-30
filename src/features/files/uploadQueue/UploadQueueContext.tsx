@@ -4,9 +4,11 @@ import { toast } from 'sonner'
 
 import { toApiError } from '@/shared/api/client'
 import { ApiErrorCodes } from '@/shared/api/errors'
+import { useAuth } from '@/shared/hooks/useAuth'
 import type { DroppedItems } from '@/shared/lib/fileDrop'
 
 import { createFolderRequest, filesKeys, listSubfoldersRequest } from '../api'
+import type { UploadStatusResponse } from '../types'
 import {
   ProcessingTimeoutError,
   UploadSessionEndedError,
@@ -35,6 +37,7 @@ import {
   uploadChunkWithRetry,
 } from './pipeline'
 import { RateLimitGate, withRateLimitRetry } from './rateLimit'
+import { ResumableStore, getBrowserStorage, resumableStorageKey } from './resumableUploads'
 import { SpeedTracker } from './speed'
 import {
   MAX_FOLDER_UPLOAD_FILES,
@@ -45,6 +48,7 @@ import {
   unreadableMessage,
 } from './treeUpload'
 import type { ChunkStatus, UploadQueueEntry, UploadTarget } from './types'
+import { useInterruptedUploads, type InterruptedUpload } from './useInterruptedUploads'
 
 type UploadQueueContextValue = {
   entries: UploadQueueEntry[]
@@ -84,6 +88,14 @@ type UploadQueueContextValue = {
   retryAllFailed: () => void
   /** Solo válido sobre entradas terminadas (done/error/cancelled) — quita la fila de la lista. */
   removeEntry: (id: string) => void
+  /**
+   * Subidas que una visita anterior dejó a medias en el servidor (§7.4): el archivo no
+   * se conserva entre recargas, así que se reanudan volviendo a darlo (soltarlo o
+   * elegirlo) — solo se envía lo que falta.
+   */
+  interruptedUploads: InterruptedUpload[]
+  /** Olvida una subida interrumpida. No hay endpoint para cancelarla en el servidor (§5.4). */
+  discardInterrupted: (sessionId: string) => void
 }
 
 const UploadQueueContext = createContext<UploadQueueContextValue | null>(null)
@@ -132,6 +144,20 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
   // (concurrency.ts). Es lo que hace que MAX_PARALLEL_CHUNK_UPLOADS sea el único
   // mando del paralelismo: da igual cuántos archivos suban a la vez.
   const [chunkSlots] = useState(() => new AsyncSemaphore(MAX_PARALLEL_CHUNK_UPLOADS))
+
+  // Subidas reanudables tras recargar (§7.4): qué sesiones tiene el servidor abiertas para
+  // este usuario. Sin usuario o sin almacenamiento, `list()` es siempre vacío y todo
+  // funciona como antes (solo que sin reanudación).
+  const { claims } = useAuth()
+  const userId = claims?.userId
+  const resumableStore = useMemo(
+    () => (userId === undefined ? null : new ResumableStore(getBrowserStorage(), resumableStorageKey(userId))),
+    [userId],
+  )
+  const { interrupted, discard: discardInterrupted, claim: claimResumable } = useInterruptedUploads(
+    resumableStore,
+    rateLimitGate,
+  )
 
   // Crea o reutiliza las carpetas de destino de las subidas de carpeta (§7.4). Sus
   // peticiones pasan por la misma pausa de rate limit que el resto de la cola.
@@ -281,19 +307,65 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
         return resolved
       }
 
+      // Sesión del servidor a la que pertenece esta entrada: para limpiar su registro de
+      // reanudación (§7.4) si acaba terminada o muerta.
+      let currentSessionId: string | undefined = entry.sessionId
+
       try {
         const destinationFolderId = await resolveDestination()
 
+        // Reanudar tras una recarga (§7.4): si el usuario vuelve a dar un archivo cuya
+        // sesión quedó a medias en una visita anterior (mismo nombre, tamaño, fecha,
+        // destino y corte en chunks), se continúa esa sesión en vez de empezar otra.
+        let adoptedSessionId: string | undefined
+        if (!entry.sessionId) {
+          const record = claimResumable({
+            fileName: entry.file.name,
+            size: entry.file.size,
+            lastModified: entry.file.lastModified,
+            chunkSizeBytes: CHUNK_SIZE_BYTES,
+            totalChunks: plan.totalChunks,
+            folderId: destinationFolderId,
+          })
+          if (record) {
+            adoptedSessionId = record.sessionId
+            currentSessionId = record.sessionId
+            patchEntry(entry.id, { sessionId: record.sessionId, totalChunks: record.totalChunks })
+          }
+        }
+
         // Reintento (§7.4): si la entrada ya tenía sesión, el servidor dice en qué
         // punto quedó (faltan chunks / ya ensamblando / ya terminada) en vez de
-        // repetir nada a ciegas. `const` para que las closures conserven el tipo `string`.
-        const existingSessionId = entry.sessionId
-        const resumedStatus = existingSessionId
-          ? await limited(() => getUploadStatus(existingSessionId, controller.signal))
-          : null
+        // repetir nada a ciegas.
+        let existingSessionId: string | undefined = entry.sessionId ?? adoptedSessionId
+        let resumedStatus: UploadStatusResponse | null = null
+        if (existingSessionId) {
+          const sessionToCheck = existingSessionId
+          try {
+            resumedStatus = await limited(() => getUploadStatus(sessionToCheck, controller.signal))
+          } catch (error) {
+            // Una sesión adoptada que ya no existe no es un fallo del usuario: se empieza una nueva.
+            if (!adoptedSessionId || toApiError(error).errorCode !== ApiErrorCodes.UploadSessionNotFound) throw error
+          }
+          // Sesión adoptada que ya no sirve (desaparecida, cancelada o con otro nº de chunks
+          // del esperado): se descarta en silencio y esta subida empieza de cero.
+          if (
+            adoptedSessionId &&
+            (resumedStatus === null ||
+              resumedStatus.status === 'cancelled' ||
+              resumedStatus.totalChunks !== plan.totalChunks)
+          ) {
+            resumableStore?.remove(adoptedSessionId)
+            patchEntry(entry.id, { sessionId: undefined, totalChunks: 0 })
+            existingSessionId = undefined
+            resumedStatus = null
+            currentSessionId = undefined
+          }
+        }
 
         if (resumedStatus?.status === 'cancelled') throw new UploadSessionEndedError(resumedStatus.errorCode)
 
+        // `const` para que las closures de abajo conserven el tipo `string`.
         const sessionId: string =
           existingSessionId ??
           (await limited(() =>
@@ -307,7 +379,24 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
               controller.signal,
             ),
           ))
-        if (!existingSessionId) patchEntry(entry.id, { sessionId, totalChunks: plan.totalChunks })
+        if (!existingSessionId) {
+          currentSessionId = sessionId
+          patchEntry(entry.id, { sessionId, totalChunks: plan.totalChunks })
+          // Desde aquí el servidor tiene una sesión abierta: se apunta para poder
+          // reanudarla si se cierra o recarga la pestaña (§7.4).
+          resumableStore?.upsert({
+            sessionId,
+            fileName: entry.file.name,
+            size: entry.file.size,
+            lastModified: entry.file.lastModified,
+            chunkSizeBytes: CHUNK_SIZE_BYTES,
+            totalChunks: plan.totalChunks,
+            folderId: destinationFolderId,
+            folderName: entry.folderName,
+            phase: 'uploading',
+            createdAt: Date.now(),
+          })
+        }
 
         // La sesión puede estar ya en 'processing' (se reintenta tras perder la
         // respuesta de `complete`, o tras un fallo de red mientras se esperaba) o
@@ -324,6 +413,9 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
           // (el planificador arranca la siguiente) y pasa a esperar el resultado.
           const backlogBytes = [...processingBytesRef.current.values()].reduce((sum, bytes) => sum + bytes, 0)
           processingBytesRef.current.set(entry.id, entry.file.size)
+          // Ya no hace falta el archivo para terminar: el servidor lo ensambla solo, y tras
+          // una recarga basta con esperar su final (useInterruptedUploads).
+          resumableStore?.setPhase(sessionId, 'processing')
           patchEntry(entry.id, {
             status: 'processing',
             progress: 100,
@@ -342,6 +434,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
         }
 
         patchEntry(entry.id, { status: 'done', progress: 100, uploadedBytes: entry.file.size, speedBytesPerSec: null })
+        resumableStore?.remove(sessionId)
         void queryClient.invalidateQueries({ queryKey: filesKeys.contents(destinationFolderId) })
         void queryClient.invalidateQueries({ queryKey: filesKeys.storageUsage })
       } catch (error) {
@@ -381,6 +474,8 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
           const isStaleDestination =
             entry.subPath !== undefined && apiError.errorCode === ApiErrorCodes.FolderNotFound
           if (isStaleDestination) folderResolver.clear()
+          // Sesión muerta: ya no se puede reanudar, así que no se ofrece reanudarla tras una recarga.
+          if (isDeadSession && currentSessionId) resumableStore?.remove(currentSessionId)
           patchEntry(entry.id, {
             status: 'error',
             speedBytesPerSec: null,
@@ -397,7 +492,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
         controllersRef.current.delete(entry.id)
       }
     },
-    [chunkSlots, folderResolver, patchEntry, queryClient, rateLimitGate, setChunkStatus],
+    [chunkSlots, claimResumable, folderResolver, patchEntry, queryClient, rateLimitGate, resumableStore, setChunkStatus],
   )
 
   // Limpia el aviso de pausa al llegar su instante. Comparar contra el valor
@@ -581,10 +676,19 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
     )
   }, [entries])
 
-  const removeEntry = useCallback((id: string) => {
-    startedRef.current.delete(id)
-    setEntries((current) => current.filter((entry) => entry.id !== id))
-  }, [])
+  const removeEntry = useCallback(
+    (id: string) => {
+      // Quitar de la lista una subida fallida o cancelada es abandonarla: ya no se ofrece
+      // reanudarla tras una recarga (la sesión queda huérfana en el servidor, §5.4).
+      const entry = entries.find((candidate) => candidate.id === id)
+      if (entry?.sessionId && (entry.status === 'error' || entry.status === 'cancelled')) {
+        resumableStore?.remove(entry.sessionId)
+      }
+      startedRef.current.delete(id)
+      setEntries((current) => current.filter((candidate) => candidate.id !== id))
+    },
+    [entries, resumableStore],
+  )
 
   // CLAUDE.md §7.4: al recuperar conexión, reintenta solo las entradas que
   // fallaron por un problema de red (errorCode null — nunca hubo respuesta
@@ -618,6 +722,8 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
       retryEntry,
       retryAllFailed,
       removeEntry,
+      interruptedUploads: interrupted,
+      discardInterrupted,
     }),
     [
       entries,
@@ -633,6 +739,8 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
       retryEntry,
       retryAllFailed,
       removeEntry,
+      interrupted,
+      discardInterrupted,
     ],
   )
 
