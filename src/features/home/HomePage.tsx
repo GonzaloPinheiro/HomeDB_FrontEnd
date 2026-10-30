@@ -17,6 +17,7 @@ import { getGreeting } from './greeting'
 // flags, no cuentan para decidir si el usuario "tiene algo que ver").
 const MODULES_WITH_SCREEN: AppModule[] = [
   'Files',
+  'Torrents',
   'SystemMonitor',
   'UserManagement',
   'SystemLogs',

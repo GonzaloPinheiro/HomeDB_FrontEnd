@@ -16,6 +16,7 @@ import { AppShell } from './layout/AppShell'
 const LoginPage = lazy(() => import('@/features/auth/components/LoginPage'))
 const HomePage = lazy(() => import('@/features/home/HomePage'))
 const FilesPage = lazy(() => import('@/features/files/FilesPage'))
+const TorrentsPage = lazy(() => import('@/features/torrents/TorrentsPage'))
 const MonitorPage = lazy(() => import('@/features/system-monitor/MonitorPage'))
 const UsersPage = lazy(() => import('@/features/admin-users/UsersPage'))
 const SystemLogsPage = lazy(() => import('@/features/admin-system-logs/SystemLogsPage'))
@@ -87,6 +88,16 @@ export const router = createBrowserRouter([
               <RequireModule module="Files">
                 <ErrorBoundary sectionLabel="el explorador de archivos">
                   <FilesPage />
+                </ErrorBoundary>
+              </RequireModule>
+            ),
+          },
+          {
+            path: '/torrents',
+            element: (
+              <RequireModule module="Torrents">
+                <ErrorBoundary sectionLabel="Torrents">
+                  <TorrentsPage />
                 </ErrorBoundary>
               </RequireModule>
             ),

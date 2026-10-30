@@ -6,7 +6,7 @@ import { useExplorerItemInteraction } from '../useExplorerItemInteraction'
 import { ItemActionsMenu } from './ItemActionsMenu'
 import { ItemIcon } from './ItemIcon'
 import type { ExplorerItemViewProps } from './itemViewProps'
-import { SelectCheckbox } from './SelectCheckbox'
+import { SelectCheckbox } from '@/shared/components/SelectCheckbox'
 
 // CLAUDE.md §6.3: fila unificada — carpeta y archivo comparten estructura,
 // diferenciados solo por el icono. Toda la fila de una carpeta es clicable

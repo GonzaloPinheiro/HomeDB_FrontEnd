@@ -3,7 +3,7 @@ import { cn } from '@/shared/lib/utils'
 import type { SortDirection, SortKey } from '../sort'
 import type { ViewMode } from '../viewMode'
 import { HEADER_ROW_CLASSES } from './explorerLayout'
-import { SelectCheckbox } from './SelectCheckbox'
+import { SelectCheckbox } from '@/shared/components/SelectCheckbox'
 import { SortableHeader } from './SortableHeader'
 
 type ExplorerColumnHeadersProps = {
