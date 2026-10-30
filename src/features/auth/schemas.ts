@@ -7,3 +7,14 @@ export const loginSchema = z.object({
 })
 
 export type LoginFormValues = z.infer<typeof loginSchema>
+
+// Recuperar contraseña (§6.17, hoy maqueta). Dos mensajes distintos: vacío y mal formado.
+export const recoverPasswordSchema = z.object({
+  email: z
+    .string()
+    .trim()
+    .min(1, 'Escribe tu correo electrónico')
+    .pipe(z.email('Escribe un correo válido')),
+})
+
+export type RecoverPasswordValues = z.infer<typeof recoverPasswordSchema>
