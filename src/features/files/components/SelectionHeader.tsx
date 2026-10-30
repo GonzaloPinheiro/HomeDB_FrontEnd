@@ -3,7 +3,7 @@ import { FolderInput, Trash2, X } from 'lucide-react'
 import { Button } from '@/shared/components/ui/button'
 
 import { HEADER_ROW_CLASSES } from './explorerLayout'
-import { SelectCheckbox } from './SelectCheckbox'
+import { SelectCheckbox } from '@/shared/components/SelectCheckbox'
 
 type SelectionHeaderProps = {
   count: number

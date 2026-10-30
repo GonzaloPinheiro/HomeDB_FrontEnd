@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 // Reexportado desde usePermissions (§7.3): mismo DTO (UserModulePermissionsResponseDto,
-// 9 flags) que "Mis permisos", solo que aquí se consulta/edita el de OTRO
+// 10 flags) que "Mis permisos", solo que aquí se consulta/edita el de OTRO
 // usuario — no duplicar la forma del objeto en dos sitios.
 export { permissionsSchema, type ModulePermissions } from '@/shared/hooks/usePermissions'
 

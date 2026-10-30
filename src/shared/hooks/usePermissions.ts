@@ -5,7 +5,7 @@ import { api, unwrap } from '@/shared/api/client'
 import { useAuth } from '@/shared/hooks/useAuth'
 import type { ApiObjResponse, AppModule } from '@/shared/types/api'
 
-// Forma real de UserModulePermissionsResponseDto (9 flags), en camelCase.
+// Forma real de UserModulePermissionsResponseDto (10 flags), en camelCase.
 // Exportado: lo reutiliza features/admin-permissions (Fase 4b) para no
 // duplicar la forma del mismo DTO cuando un Admin edita los permisos de OTRO
 // usuario en vez de los propios.
@@ -13,6 +13,11 @@ export const permissionsSchema = z.object({
   filesEnabled: z.boolean(),
   expensesEnabled: z.boolean(),
   investmentsEnabled: z.boolean(),
+  // Flag añadido en el backend en octubre 2026 (commit "Añadir módulo de torrents").
+  // `.default(false)` tolera un backend desplegado sin ese commit: sin él, un campo
+  // ausente haría fallar el parseo y dejaría sin permisos a TODOS los usuarios no
+  // admin. Quitarlo cuando el backend con el flag esté desplegado en producción.
+  torrentsEnabled: z.boolean().default(false),
   systemMonitorEnabled: z.boolean(),
   userManagementEnabled: z.boolean(),
   roleManagementEnabled: z.boolean(),
@@ -30,6 +35,7 @@ export const MODULE_FLAG: Record<AppModule, keyof ModulePermissions> = {
   Files: 'filesEnabled',
   Expenses: 'expensesEnabled',
   Investments: 'investmentsEnabled',
+  Torrents: 'torrentsEnabled',
   SystemMonitor: 'systemMonitorEnabled',
   UserManagement: 'userManagementEnabled',
   RoleManagement: 'roleManagementEnabled',

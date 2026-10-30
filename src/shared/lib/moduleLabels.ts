@@ -1,6 +1,7 @@
 import {
   Activity,
   ClipboardList,
+  Download,
   Folder,
   ScrollText,
   Shield,
@@ -20,6 +21,7 @@ export const MODULE_LABELS: Record<AppModule, { label: string; icon: LucideIcon 
   Files: { label: 'Archivos', icon: Folder },
   Expenses: { label: 'Gastos', icon: Wallet },
   Investments: { label: 'Inversiones', icon: TrendingUp },
+  Torrents: { label: 'Torrents', icon: Download },
   SystemMonitor: { label: 'Monitor', icon: Activity },
   UserManagement: { label: 'Gestión de usuarios', icon: Users },
   RoleManagement: { label: 'Gestión de roles', icon: Shield },

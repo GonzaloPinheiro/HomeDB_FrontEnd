@@ -81,3 +81,12 @@ export function formatLongDate(date: Date): string {
   const text = LONG_DATE.format(date)
   return text.charAt(0).toUpperCase() + text.slice(1)
 }
+
+const TIME = new Intl.DateTimeFormat('es-ES', { hour: '2-digit', minute: '2-digit' })
+
+/** ISO -> solo la hora local, "18:02" (p. ej. "Pausado por ti · 18:02", §6.19). */
+export function formatTime(iso: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return '—'
+  return TIME.format(date)
+}

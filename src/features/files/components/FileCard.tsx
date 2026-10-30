@@ -5,7 +5,7 @@ import { useExplorerItemInteraction } from '../useExplorerItemInteraction'
 import { FileThumbnail } from './FileThumbnail'
 import { ItemActionsMenu } from './ItemActionsMenu'
 import type { ExplorerItemViewProps } from './itemViewProps'
-import { SelectCheckbox } from './SelectCheckbox'
+import { SelectCheckbox } from '@/shared/components/SelectCheckbox'
 
 // CLAUDE.md §6.3b: tarjeta de la vista de miniaturas — misma interacción que
 // FileRow (selección, arrastre, entrar en carpetas, menú de acciones: todo en

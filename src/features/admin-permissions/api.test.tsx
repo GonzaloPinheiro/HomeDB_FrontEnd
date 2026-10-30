@@ -28,6 +28,7 @@ const ALL_FALSE: ModulePermissions = {
   filesEnabled: false,
   expensesEnabled: false,
   investmentsEnabled: false,
+  torrentsEnabled: false,
   systemMonitorEnabled: false,
   userManagementEnabled: false,
   roleManagementEnabled: false,

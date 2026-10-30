@@ -1,6 +1,7 @@
 import {
   Activity,
   ClipboardList,
+  Download,
   Folder,
   House,
   ScrollText,
@@ -31,10 +32,12 @@ type NavItem = {
 // CLAUDE.md §6.2: módulos personales arriba, sección "Administración" aparte.
 // Roles queda fuera del sidebar mientras está en pausa de diseño (§6.6b).
 // Expenses/Investments/RemoteScripts son módulos fantasma (§5.3): sin nav.
+// Torrents (§6.19) sí tiene pantalla, aunque hoy sea una maqueta.
 // "Inicio" (§6.18) es la pantalla de entrada: no exige ningún módulo.
 const PERSONAL_ITEMS: NavItem[] = [
   { to: '/', label: 'Inicio', icon: House, end: true },
   { to: '/files', label: 'Archivos', icon: Folder, module: 'Files' },
+  { to: '/torrents', label: 'Torrents', icon: Download, module: 'Torrents' },
   { to: '/monitor', label: 'Monitor', icon: Activity, module: 'SystemMonitor' },
 ]
 
