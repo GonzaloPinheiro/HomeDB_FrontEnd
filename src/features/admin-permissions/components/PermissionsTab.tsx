@@ -22,8 +22,8 @@ type PermissionsTabProps = {
 /**
  * CLAUDE.md §5.3/§7.3, aplicado aquí a OTRO usuario en vez de "mí mismo": si
  * el usuario objetivo es Admin, ni siquiera se dispara la query de permisos
- * (puede no tener fila en BD) y se muestra el mismo mensaje que
- * /account/permissions en vez del grid de switches.
+ * (puede no tener fila en BD) y se muestra el mismo mensaje que la sección
+ * Permisos del modal de ajustes (§6.20) en vez del grid de switches.
  */
 export const PermissionsTab = forwardRef<TabHandle, PermissionsTabProps>(function PermissionsTab(
   { userId, targetIsAdmin, onStatusChange },

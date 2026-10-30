@@ -1,4 +1,4 @@
-import { Suspense, useState } from 'react'
+import { Suspense, lazy, useState } from 'react'
 import { Outlet } from 'react-router-dom'
 
 import { UploadModal } from '@/features/files/components/UploadModal'
@@ -6,11 +6,28 @@ import { UploadQueueProvider } from '@/features/files/uploadQueue/UploadQueueCon
 import { PageSkeleton } from '@/shared/components/PageSkeleton'
 import { usePreventBrowserFileOpen } from '@/shared/hooks/usePreventBrowserFileOpen'
 
+import { useSettingsModal } from '../settings/useSettingsModal'
+
 import { Sidebar } from './Sidebar'
 import { TopHeader } from './TopHeader'
 import { UploadTray } from './UploadTray'
 
 const SIDEBAR_COLLAPSED_KEY = 'sidebar-collapsed'
+
+// Carga perezosa: el código del modal de ajustes solo se descarga la primera vez que se abre.
+const SettingsModal = lazy(() => import('../settings/SettingsModal'))
+
+// CLAUDE.md §6.20: el modal de ajustes se abre desde cualquier pantalla (menú del avatar,
+// bloque de usuario del sidebar o un enlace `?settings=…`), así que vive en el shell.
+function SettingsHost() {
+  const { section } = useSettingsModal()
+  if (section === null) return null
+  return (
+    <Suspense fallback={null}>
+      <SettingsModal />
+    </Suspense>
+  )
+}
 
 // CLAUDE.md §6.2: cabecera fija arriba, sidebar debajo, contenido a la derecha.
 // CLAUDE.md §6.5/§7.4: UploadQueueProvider se monta aquí (no dentro de la
@@ -50,6 +67,7 @@ export function AppShell() {
       </div>
       <UploadTray />
       <UploadModal />
+      <SettingsHost />
     </UploadQueueProvider>
   )
 }

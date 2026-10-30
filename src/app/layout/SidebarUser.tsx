@@ -1,14 +1,16 @@
 import { Settings } from 'lucide-react'
-import { Link } from 'react-router-dom'
 
 import { Avatar, AvatarFallback } from '@/shared/components/ui/avatar'
 import { useAuth } from '@/shared/hooks/useAuth'
+
+import { useSettingsModal } from '../settings/useSettingsModal'
 
 // Bloque de usuario al pie del sidebar expandido (diseño de Inicio, §6.18):
 // avatar + nombre + rol, con acceso directo a Ajustes. El menú completo
 // (Mis permisos, Cerrar sesión) sigue en el avatar de la cabecera (§6.2).
 export function SidebarUser() {
   const { claims } = useAuth()
+  const settingsModal = useSettingsModal()
   if (!claims) return null
 
   return (
@@ -24,13 +26,14 @@ export function SidebarUser() {
           {claims.role === 'Admin' ? 'Administrador' : 'Usuario'}
         </div>
       </div>
-      <Link
-        to="/account/settings"
+      <button
+        type="button"
+        onClick={() => settingsModal.open('profile')}
         aria-label="Ajustes de cuenta"
         className="ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface-alt hover:text-text-primary"
       >
         <Settings className="h-4 w-4" aria-hidden />
-      </Link>
+      </button>
     </div>
   )
 }

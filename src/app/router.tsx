@@ -1,6 +1,6 @@
 import { SearchX } from 'lucide-react'
 import { lazy, Suspense } from 'react'
-import { createBrowserRouter, Link, Outlet } from 'react-router-dom'
+import { createBrowserRouter, Link, Navigate, Outlet } from 'react-router-dom'
 
 import { EmptyState } from '@/shared/components/EmptyState'
 import { ErrorBoundary } from '@/shared/components/ErrorBoundary'
@@ -21,8 +21,6 @@ const MonitorPage = lazy(() => import('@/features/system-monitor/MonitorPage'))
 const UsersPage = lazy(() => import('@/features/admin-users/UsersPage'))
 const SystemLogsPage = lazy(() => import('@/features/admin-system-logs/SystemLogsPage'))
 const AuditLogsPage = lazy(() => import('@/features/admin-audit-logs/AuditLogsPage'))
-const AccountSettingsPage = lazy(() => import('@/features/account/AccountSettingsPage'))
-const MyPermissionsPage = lazy(() => import('@/features/account/MyPermissionsPage'))
 
 function NotFoundPage() {
   return (
@@ -142,22 +140,16 @@ export const router = createBrowserRouter([
               </RequireModule>
             ),
           },
-          // Cuenta propia: solo requiere sesión, sin guard de módulo
+          // Los ajustes de cuenta son un modal sobre cualquier pantalla (§6.20). Las rutas de
+          // antes se conservan solo para no romper enlaces y marcadores: redirigen a Inicio con
+          // el modal abierto en la sección que correspondía.
           {
             path: '/account/settings',
-            element: (
-              <ErrorBoundary sectionLabel="Ajustes de cuenta">
-                <AccountSettingsPage />
-              </ErrorBoundary>
-            ),
+            element: <Navigate to="/?settings=profile" replace />,
           },
           {
             path: '/account/permissions',
-            element: (
-              <ErrorBoundary sectionLabel="Mis permisos">
-                <MyPermissionsPage />
-              </ErrorBoundary>
-            ),
+            element: <Navigate to="/?settings=permissions" replace />,
           },
         ],
       },
