@@ -1,12 +1,20 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent } from 'react'
-import { toast } from 'sonner'
 
-import { dataTransferHasFiles, extractFiles, nameForPastedFile, type DataTransferLike } from '@/shared/lib/fileDrop'
+import {
+  dataTransferHasFiles,
+  extractDroppedItems,
+  nameForPastedFile,
+  type DataTransferLike,
+  type DroppedItems,
+} from '@/shared/lib/fileDrop'
 
 // CLAUDE.md §6.3/§11: mecánica genérica de "soltar (o pegar) archivos del
 // sistema sobre la web". NO sabe qué se hace con ellos (eso lo decide cada
-// feature en `onFiles`): reutilizable por el explorador de archivos, el panel
+// feature en `onDrop`): reutilizable por el explorador de archivos, el panel
 // de subidas y, más adelante, otras pantallas (ej. torrents).
+//
+// Entrega archivos Y carpetas (`DroppedItems`): leer el contenido de una carpeta es
+// asíncrono y lo decide el consumidor, no este hook.
 //
 // Es HTML5 DnD nativo y no dnd-kit (§3, §10) porque dnd-kit solo mueve elementos
 // de la propia página con eventos de puntero: soltar archivos desde el sistema
@@ -23,7 +31,7 @@ type Options = {
    * zona `window` activa a la vez.
    */
   scope: 'window' | 'element'
-  onFiles: (files: File[]) => void
+  onDrop: (dropped: DroppedItems) => void
   /** Solo `window`: también acepta pegar con Ctrl/Cmd+V (capturas, archivos copiados del explorador). */
   acceptPaste?: boolean
 }
@@ -46,15 +54,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
   return target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)
 }
 
-function notifyDirectories(count: number): void {
-  toast.error(
-    count === 1
-      ? 'No se puede subir una carpeta todavía — suelta los archivos de dentro'
-      : `No se pueden subir ${count} carpetas todavía — suelta los archivos de dentro`,
-  )
-}
-
-export function useFileDropZone({ enabled = true, scope, onFiles, acceptPaste = false }: Options): {
+export function useFileDropZone({ enabled = true, scope, onDrop, acceptPaste = false }: Options): {
   isDragging: boolean
   /** Solo para `scope: 'element'`: se esparcen sobre el elemento que actúa de zona. */
   dropProps: DropProps
@@ -63,18 +63,18 @@ export function useFileDropZone({ enabled = true, scope, onFiles, acceptPaste = 
   // dragenter/dragleave se disparan también al cruzar los hijos del elemento
   // (el resaltado parpadearía): se cuentan las entradas y se apaga al llegar a 0.
   const depth = useRef(0)
-  const onFilesRef = useRef(onFiles)
+  const onDropRef = useRef(onDrop)
   useEffect(() => {
-    onFilesRef.current = onFiles
+    onDropRef.current = onDrop
   })
 
   const handlers = useMemo(() => {
     const stopBubbling = scope === 'element'
 
     const deliver = (dataTransfer: DataTransferLike, transform?: (file: File) => File) => {
-      const { files, directoryCount } = extractFiles(dataTransfer)
-      if (directoryCount > 0) notifyDirectories(directoryCount)
-      if (files.length > 0) onFilesRef.current(transform ? files.map((file) => transform(file)) : files)
+      const { files, directories } = extractDroppedItems(dataTransfer)
+      if (files.length === 0 && directories.length === 0) return
+      onDropRef.current({ files: transform ? files.map((file) => transform(file)) : files, directories })
     }
 
     const enter = (event: DragLike) => {
@@ -105,6 +105,7 @@ export function useFileDropZone({ enabled = true, scope, onFiles, acceptPaste = 
       if (stopBubbling) event.stopPropagation()
       depth.current = 0
       setIsDragging(false)
+      // Sincrónico: el navegador invalida `items` al terminar el manejador (fileDrop.ts).
       deliver(event.dataTransfer)
     }
 

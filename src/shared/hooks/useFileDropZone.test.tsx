@@ -1,21 +1,30 @@
 import { act, cleanup, fireEvent, render, renderHook, screen } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { useFileDropZone } from './useFileDropZone'
 
-const toastError = vi.hoisted(() => vi.fn())
-vi.mock('sonner', () => ({ toast: { error: toastError } }))
-
 const file = (name: string) => new File(['x'], name)
 
+/** Entrada de carpeta de mentira: el hook solo la reenvía, no la lee. */
+const directory = (name: string) => ({
+  isFile: false,
+  isDirectory: true,
+  name,
+  createReader: () => ({ readEntries: (onSuccess: (entries: never[]) => void) => onSuccess([]) }),
+})
+
 /** Doble mínimo de DataTransfer: lo que el hook lee (types, files, items). */
-function transfer(files: File[], options: { directories?: number; types?: string[] } = {}) {
+function transfer(files: File[], options: { directories?: ReturnType<typeof directory>[]; types?: string[] } = {}) {
   const items = [
-    ...files.map((f) => ({ kind: 'file', getAsFile: () => f, webkitGetAsEntry: () => ({ isDirectory: false }) })),
-    ...Array.from({ length: options.directories ?? 0 }, () => ({
+    ...files.map((f) => ({
       kind: 'file',
-      getAsFile: () => new File([], 'carpeta'),
-      webkitGetAsEntry: () => ({ isDirectory: true }),
+      getAsFile: () => f,
+      webkitGetAsEntry: () => ({ isFile: true, isDirectory: false, name: f.name }),
+    })),
+    ...(options.directories ?? []).map((entry) => ({
+      kind: 'file',
+      getAsFile: () => new File([], entry.name),
+      webkitGetAsEntry: () => entry,
     })),
   ]
   return { types: options.types ?? ['Files'], files, items, dropEffect: 'none' }
@@ -31,13 +40,12 @@ function fire(target: EventTarget, type: string, dataTransfer?: unknown): Event 
   return event
 }
 
-beforeEach(() => toastError.mockClear())
 // Sin globals de Vitest, RTL no desmonta solo: los listeners de document de un test se acumularían en el siguiente.
 afterEach(cleanup)
 
 describe('useFileDropZone — scope window', () => {
   it('resalta mientras se arrastran archivos y se apaga al salir (con hijos de por medio)', () => {
-    const { result } = renderHook(() => useFileDropZone({ scope: 'window', onFiles: vi.fn() }))
+    const { result } = renderHook(() => useFileDropZone({ scope: 'window', onDrop: vi.fn() }))
     const dt = transfer([file('a.txt')])
 
     fire(document.body, 'dragenter', dt)
@@ -50,14 +58,14 @@ describe('useFileDropZone — scope window', () => {
   })
 
   it('ignora arrastres sin archivos (texto, enlaces)', () => {
-    const { result } = renderHook(() => useFileDropZone({ scope: 'window', onFiles: vi.fn() }))
+    const { result } = renderHook(() => useFileDropZone({ scope: 'window', onDrop: vi.fn() }))
     fire(document.body, 'dragenter', transfer([], { types: ['text/plain'] }))
     expect(result.current.isDragging).toBe(false)
   })
 
   it('al soltar entrega los archivos, apaga el resaltado y permite el drop', () => {
-    const onFiles = vi.fn()
-    const { result } = renderHook(() => useFileDropZone({ scope: 'window', onFiles }))
+    const onDrop = vi.fn()
+    const { result } = renderHook(() => useFileDropZone({ scope: 'window', onDrop }))
     const a = file('a.txt')
     const dt = transfer([a])
 
@@ -68,41 +76,43 @@ describe('useFileDropZone — scope window', () => {
     const drop = fire(document.body, 'drop', dt)
 
     expect(drop.defaultPrevented).toBe(true)
-    expect(onFiles).toHaveBeenCalledWith([a])
+    expect(onDrop).toHaveBeenCalledWith({ files: [a], directories: [] })
     expect(result.current.isDragging).toBe(false)
   })
 
-  it('avisa de las carpetas, no las entrega, y sube el resto', () => {
-    const onFiles = vi.fn()
-    renderHook(() => useFileDropZone({ scope: 'window', onFiles }))
+  it('entrega las carpetas aparte de los archivos, sin tratarlas como archivos', () => {
+    const onDrop = vi.fn()
+    renderHook(() => useFileDropZone({ scope: 'window', onDrop }))
     const a = file('a.txt')
-    fire(document.body, 'drop', transfer([a], { directories: 2 }))
+    const fotos = directory('Fotos')
+    const docs = directory('Docs')
+    fire(document.body, 'drop', transfer([a], { directories: [fotos, docs] }))
 
-    expect(toastError).toHaveBeenCalledTimes(1)
-    expect(onFiles).toHaveBeenCalledWith([a])
+    expect(onDrop).toHaveBeenCalledTimes(1)
+    expect(onDrop).toHaveBeenCalledWith({ files: [a], directories: [fotos, docs] })
   })
 
-  it('solo carpetas: avisa y no llama a onFiles', () => {
-    const onFiles = vi.fn()
-    renderHook(() => useFileDropZone({ scope: 'window', onFiles }))
-    fire(document.body, 'drop', transfer([], { directories: 1 }))
-    expect(toastError).toHaveBeenCalledTimes(1)
-    expect(onFiles).not.toHaveBeenCalled()
+  it('solo carpetas: también las entrega', () => {
+    const onDrop = vi.fn()
+    renderHook(() => useFileDropZone({ scope: 'window', onDrop }))
+    const fotos = directory('Fotos')
+    fire(document.body, 'drop', transfer([], { directories: [fotos] }))
+    expect(onDrop).toHaveBeenCalledWith({ files: [], directories: [fotos] })
   })
 
   it('desactivado no escucha nada', () => {
-    const onFiles = vi.fn()
-    const { result } = renderHook(() => useFileDropZone({ scope: 'window', enabled: false, onFiles }))
+    const onDrop = vi.fn()
+    const { result } = renderHook(() => useFileDropZone({ scope: 'window', enabled: false, onDrop }))
     fire(document.body, 'dragenter', transfer([file('a.txt')]))
     fire(document.body, 'drop', transfer([file('a.txt')]))
     expect(result.current.isDragging).toBe(false)
-    expect(onFiles).not.toHaveBeenCalled()
+    expect(onDrop).not.toHaveBeenCalled()
   })
 
-  it('usa siempre el onFiles más reciente sin reengancharse', () => {
+  it('usa siempre el onDrop más reciente sin reengancharse', () => {
     const first = vi.fn()
     const second = vi.fn()
-    const { rerender } = renderHook(({ cb }) => useFileDropZone({ scope: 'window', onFiles: cb }), {
+    const { rerender } = renderHook(({ cb }) => useFileDropZone({ scope: 'window', onDrop: cb }), {
       initialProps: { cb: first },
     })
     rerender({ cb: second })
@@ -112,7 +122,7 @@ describe('useFileDropZone — scope window', () => {
   })
 
   it('el resaltado no se queda colgado si el arrastre termina sin dragleave', () => {
-    const { result } = renderHook(() => useFileDropZone({ scope: 'window', onFiles: vi.fn() }))
+    const { result } = renderHook(() => useFileDropZone({ scope: 'window', onDrop: vi.fn() }))
     fire(document.body, 'dragenter', transfer([file('a.txt')]))
     expect(result.current.isDragging).toBe(true)
     fire(document, 'pointermove')
@@ -121,25 +131,25 @@ describe('useFileDropZone — scope window', () => {
 
   describe('pegar', () => {
     it('entrega los archivos del portapapeles con nombre de captura si es genérico', () => {
-      const onFiles = vi.fn()
-      renderHook(() => useFileDropZone({ scope: 'window', acceptPaste: true, onFiles }))
+      const onDrop = vi.fn()
+      renderHook(() => useFileDropZone({ scope: 'window', acceptPaste: true, onDrop }))
       const event = fire(document.body, 'paste', transfer([new File(['x'], 'image.png', { type: 'image/png' })]))
 
       expect(event.defaultPrevented).toBe(true)
-      const [files] = onFiles.mock.calls[0] as [File[]]
-      expect(files[0].name).toMatch(/^Captura \d{4}-\d{2}-\d{2} \d{2}\.\d{2}\.\d{2}\.png$/)
+      const [dropped] = onDrop.mock.calls[0] as [{ files: File[] }]
+      expect(dropped.files[0].name).toMatch(/^Captura \d{4}-\d{2}-\d{2} \d{2}\.\d{2}\.\d{2}\.png$/)
     })
 
     it('no hace nada si no se pidió acceptPaste', () => {
-      const onFiles = vi.fn()
-      renderHook(() => useFileDropZone({ scope: 'window', onFiles }))
+      const onDrop = vi.fn()
+      renderHook(() => useFileDropZone({ scope: 'window', onDrop }))
       fire(document.body, 'paste', transfer([file('a.txt')]))
-      expect(onFiles).not.toHaveBeenCalled()
+      expect(onDrop).not.toHaveBeenCalled()
     })
 
     it('pegar texto o pegar dentro de un campo no sube nada', () => {
-      const onFiles = vi.fn()
-      renderHook(() => useFileDropZone({ scope: 'window', acceptPaste: true, onFiles }))
+      const onDrop = vi.fn()
+      renderHook(() => useFileDropZone({ scope: 'window', acceptPaste: true, onDrop }))
       fire(document.body, 'paste', transfer([], { types: ['text/plain'] }))
 
       const input = document.createElement('input')
@@ -147,16 +157,17 @@ describe('useFileDropZone — scope window', () => {
       const event = fire(input, 'paste', transfer([file('a.txt')]))
       input.remove()
 
-      expect(onFiles).not.toHaveBeenCalled()
+      expect(onDrop).not.toHaveBeenCalled()
       expect(event.defaultPrevented).toBe(false)
     })
   })
 })
 
 describe('useFileDropZone — scope element', () => {
-  function Harness({ onZone, onWindow }: { onZone: (f: File[]) => void; onWindow: (f: File[]) => void }) {
-    useFileDropZone({ scope: 'window', onFiles: onWindow })
-    const { isDragging, dropProps } = useFileDropZone({ scope: 'element', onFiles: onZone })
+  type Drop = Parameters<Parameters<typeof useFileDropZone>[0]['onDrop']>[0]
+  function Harness({ onZone, onWindow }: { onZone: (d: Drop) => void; onWindow: (d: Drop) => void }) {
+    useFileDropZone({ scope: 'window', onDrop: onWindow })
+    const { isDragging, dropProps } = useFileDropZone({ scope: 'element', onDrop: onZone })
     return (
       <div data-testid="zone" data-dragging={isDragging} {...dropProps}>
         <span data-testid="child">zona</span>
@@ -180,7 +191,7 @@ describe('useFileDropZone — scope element', () => {
     fireEvent.drop(screen.getByTestId('child'), { dataTransfer: dt })
     expect(zone.dataset.dragging).toBe('false')
     expect(onZone).toHaveBeenCalledTimes(1)
-    expect(onZone).toHaveBeenCalledWith([a])
+    expect(onZone).toHaveBeenCalledWith({ files: [a], directories: [] })
     // La zona de pantalla completa NO debe recibir el mismo drop (duplicaría la subida)
     expect(onWindow).not.toHaveBeenCalled()
   })

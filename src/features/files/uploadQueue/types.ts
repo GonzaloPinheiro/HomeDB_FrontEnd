@@ -14,8 +14,19 @@ export type UploadQueueEntry = {
   id: string
   file: File
   folderId: number | null
-  /** Nombre de la carpeta destino en el momento de encolar — se muestra por fila (§6.4), las entradas pueden apuntar a carpetas distintas si se han ido añadiendo desde varias visitas. */
+  /** Nombre de la carpeta destino en el momento de encolar — se muestra por fila (§6.4), las entradas pueden apuntar a carpetas distintas si se han ido añadiendo desde varias visitas. En una subida de carpeta incluye la ruta: "Documentos/Fotos/2024". */
   folderName: string
+  /**
+   * Solo en la subida de una carpeta (§7.4): nombres de las carpetas, de fuera
+   * adentro, que hay que crear (o reutilizar) bajo `folderId` y donde va este
+   * archivo. Ausente = el archivo va directo a `folderId`.
+   */
+  subPath?: string[]
+  /**
+   * Id real de la carpeta de `subPath` una vez resuelta (`null` = raíz). `undefined`
+   * = aún sin resolver. Se descarta si el destino resulta no existir (§7.4).
+   */
+  resolvedFolderId?: number | null
   status: UploadEntryStatus
   /** Progreso agregado 0-100 sobre el tamaño total del archivo, no del chunk en curso. */
   progress: number

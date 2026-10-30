@@ -4,9 +4,9 @@ import { toast } from 'sonner'
 
 import { toApiError } from '@/shared/api/client'
 import { ApiErrorCodes } from '@/shared/api/errors'
+import type { DroppedItems } from '@/shared/lib/fileDrop'
 
-import { filesKeys } from '../api'
-import { getExtension, isAllowedExtension } from './allowedExtensions'
+import { createFolderRequest, filesKeys, listSubfoldersRequest } from '../api'
 import {
   ProcessingTimeoutError,
   UploadSessionEndedError,
@@ -14,6 +14,14 @@ import {
   waitForUploadCompletion,
 } from './completion'
 import { AsyncSemaphore, runWithConcurrency } from './concurrency'
+import {
+  MAX_FOLDER_SCAN_FILES,
+  readDirectoryTrees,
+  treeFilesFromRelativePaths,
+  type ScanResult,
+  type TreeFile,
+} from './directoryTree'
+import { FolderResolver } from './folderResolver'
 import {
   CHUNK_SIZE_BYTES,
   MAX_CONCURRENT_UPLOADS,
@@ -28,6 +36,14 @@ import {
 } from './pipeline'
 import { RateLimitGate, withRateLimitRetry } from './rateLimit'
 import { SpeedTracker } from './speed'
+import {
+  MAX_FOLDER_UPLOAD_FILES,
+  describeSkippedFiles,
+  planTreeUpload,
+  scanLimitMessage,
+  tooManyFilesMessage,
+  unreadableMessage,
+} from './treeUpload'
 import type { ChunkStatus, UploadQueueEntry, UploadTarget } from './types'
 
 type UploadQueueContextValue = {
@@ -49,6 +65,18 @@ type UploadQueueContextValue = {
    * los de extensión no admitida se rechazan aquí con un aviso (allowedExtensions.ts).
    */
   addFiles: (files: File[], target?: UploadTarget) => number
+  /**
+   * Encola lo soltado o pegado, carpetas incluidas (§7.4): primero se lee su
+   * contenido (asíncrono) y luego sube cada archivo a la carpeta que le toca bajo
+   * `target`, creándola o reutilizando la que ya exista con ese nombre. Devuelve
+   * cuántos archivos se encolaron (0 si no había nada que subir o era demasiado).
+   */
+  addDropped: (dropped: DroppedItems, target?: UploadTarget) => Promise<number>
+  /**
+   * Igual para los archivos de una carpeta elegida con `<input webkitdirectory>`:
+   * la ruta de cada uno viene en `webkitRelativePath`. Devuelve cuántos se encolaron.
+   */
+  addFolderFiles: (files: File[], target?: UploadTarget) => number
   cancelEntry: (id: string) => void
   /** Reintenta una entrada en error/cancelada — reanuda con GET /status si ya tenía sessionId, en vez de repetir chunks ya confirmados. */
   retryEntry: (id: string) => void
@@ -59,6 +87,28 @@ type UploadQueueContextValue = {
 }
 
 const UploadQueueContext = createContext<UploadQueueContextValue | null>(null)
+
+// Señal que nunca se aborta, para las peticiones de crear/consultar carpetas: ese
+// trabajo lo comparten todos los archivos que necesitan la carpeta (folderResolver.ts),
+// así que no debe cancelarse porque se cancele UNO de ellos.
+const NEVER_ABORTED: AbortSignal = new AbortController().signal
+
+// Un árbol grande tarda en leerse (cada archivo es una consulta al navegador): el
+// aviso solo aparece si pasa de este tiempo, para no parpadear con carpetas pequeñas.
+const SCAN_FEEDBACK_DELAY_MS = 400
+
+async function scanWithFeedback(directories: DroppedItems['directories']): Promise<ScanResult> {
+  let toastId: string | number | undefined
+  const timer = setTimeout(() => {
+    toastId = toast.loading('Leyendo la carpeta…')
+  }, SCAN_FEEDBACK_DELAY_MS)
+  try {
+    return await readDirectoryTrees(directories)
+  } finally {
+    clearTimeout(timer)
+    if (toastId !== undefined) toast.dismiss(toastId)
+  }
+}
 
 /**
  * CLAUDE.md §6.5/§7.4: única vía de subida de todo el proyecto, y segunda
@@ -82,6 +132,26 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
   // (concurrency.ts). Es lo que hace que MAX_PARALLEL_CHUNK_UPLOADS sea el único
   // mando del paralelismo: da igual cuántos archivos suban a la vez.
   const [chunkSlots] = useState(() => new AsyncSemaphore(MAX_PARALLEL_CHUNK_UPLOADS))
+
+  // Crea o reutiliza las carpetas de destino de las subidas de carpeta (§7.4). Sus
+  // peticiones pasan por la misma pausa de rate limit que el resto de la cola.
+  const [folderResolver] = useState(
+    () =>
+      new FolderResolver(
+        {
+          listSubfolders: (parentId) =>
+            withRateLimitRetry(rateLimitGate, NEVER_ABORTED, () => listSubfoldersRequest(parentId)),
+          createFolder: async (name, parentId) => {
+            const folder = await withRateLimitRetry(rateLimitGate, NEVER_ABORTED, () =>
+              createFolderRequest(name, parentId),
+            )
+            return folder.id
+          },
+        },
+        // Para que la carpeta nueva aparezca ya en la lista de su padre si se está viendo.
+        (parentId) => void queryClient.invalidateQueries({ queryKey: filesKeys.contents(parentId) }),
+      ),
+  )
 
   // Estado imperativo que no necesita disparar un render por sí mismo.
   const controllersRef = useRef(new Map<string, AbortController>())
@@ -198,7 +268,22 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
         }
       }
 
+      // Carpeta en la que va el archivo. Es `entry.folderId` salvo en la subida de una
+      // carpeta (§7.4): ahí hay que crear (o reutilizar) las carpetas de `subPath` y
+      // se hace aquí, dentro del hueco de subida del propio archivo, para que un
+      // fallo al crearlas sea un error de ESTA fila con su "Reintentar" y se pueda
+      // cancelar como cualquier otro paso.
+      const resolveDestination = async (): Promise<number | null> => {
+        if (!entry.subPath || entry.subPath.length === 0) return entry.folderId
+        if (entry.resolvedFolderId !== undefined) return entry.resolvedFolderId
+        const resolved = await folderResolver.resolve(entry.folderId, entry.subPath, controller.signal)
+        patchEntry(entry.id, { resolvedFolderId: resolved })
+        return resolved
+      }
+
       try {
+        const destinationFolderId = await resolveDestination()
+
         // Reintento (§7.4): si la entrada ya tenía sesión, el servidor dice en qué
         // punto quedó (faltan chunks / ya ensamblando / ya terminada) en vez de
         // repetir nada a ciegas. `const` para que las closures conserven el tipo `string`.
@@ -217,7 +302,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
                 fileName: entry.file.name,
                 totalSizeBytes: entry.file.size,
                 totalChunks: plan.totalChunks,
-                folderId: entry.folderId,
+                folderId: destinationFolderId,
               },
               controller.signal,
             ),
@@ -257,7 +342,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
         }
 
         patchEntry(entry.id, { status: 'done', progress: 100, uploadedBytes: entry.file.size, speedBytesPerSec: null })
-        void queryClient.invalidateQueries({ queryKey: filesKeys.contents(entry.folderId) })
+        void queryClient.invalidateQueries({ queryKey: filesKeys.contents(destinationFolderId) })
         void queryClient.invalidateQueries({ queryKey: filesKeys.storageUsage })
       } catch (error) {
         if (controller.signal.aborted) {
@@ -289,6 +374,13 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
             error instanceof UploadSessionEndedError ||
             apiError.errorCode === ApiErrorCodes.UploadSessionNotActive ||
             apiError.errorCode === ApiErrorCodes.UploadSessionNotFound
+          // Subida de carpeta cuyo destino ya no existe (el usuario lo borró mientras
+          // tanto): ni el id guardado en la fila ni lo que recuerda el resolvedor
+          // valen ya, y "Reintentar" tiene que volver a resolver la ruta desde cero
+          // en vez de fallar siempre con el mismo id.
+          const isStaleDestination =
+            entry.subPath !== undefined && apiError.errorCode === ApiErrorCodes.FolderNotFound
+          if (isStaleDestination) folderResolver.clear()
           patchEntry(entry.id, {
             status: 'error',
             speedBytesPerSec: null,
@@ -297,6 +389,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
             ...(isDeadSession
               ? { sessionId: undefined, totalChunks: 0, chunks: [], progress: 0, uploadedBytes: 0 }
               : {}),
+            ...(isStaleDestination ? { resolvedFolderId: undefined } : {}),
           })
         }
       } finally {
@@ -304,7 +397,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
         controllersRef.current.delete(entry.id)
       }
     },
-    [chunkSlots, patchEntry, queryClient, rateLimitGate, setChunkStatus],
+    [chunkSlots, folderResolver, patchEntry, queryClient, rateLimitGate, setChunkStatus],
   )
 
   // Limpia el aviso de pausa al llegar su instante. Comparar contra el valor
@@ -334,6 +427,15 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
     }
   }, [entries, patchEntry, runPipeline])
 
+  // El resolvedor de carpetas recuerda qué carpetas existen mientras hay subidas en
+  // marcha (para no crear una dos veces ni preguntar por ella en cada archivo). Con
+  // la cola ya inactiva ese recuerdo puede estar desfasado —el usuario borra o crea
+  // carpetas—, así que se olvida y un "Reintentar" posterior vuelve a consultar.
+  useEffect(() => {
+    const hasActive = entries.some((e) => e.status === 'queued' || e.status === 'uploading')
+    if (!hasActive) folderResolver.clear()
+  }, [entries, folderResolver])
+
   // Aviso nativo si se cierra/recarga la pestaña con subidas en curso — cerrar
   // el PANEL nunca pierde nada (§6.5), pero cerrar la pestaña del navegador sí
   // (fuera de alcance la reanudación entre recargas, ver CLAUDE.md §7.4).
@@ -356,45 +458,86 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
 
   const closePanel = useCallback(() => setIsPanelOpen(false), [])
 
+  // Único camino por el que algo entra en la cola: archivos sueltos (`dirs` vacío) y
+  // archivos de una carpeta, para que las reglas de qué se encola no puedan divergir.
+  const enqueueTree = useCallback((items: TreeFile[], target: UploadTarget): number => {
+    // CLAUDE.md §5.4: el backend solo valida la extensión al final de la subida (al
+    // ensamblar, en background), y rechaza los archivos de 0 bytes en `init`; se
+    // descartan aquí para no subir un archivo grande entero y perderlo al final.
+    const plan = planTreeUpload(items)
+
+    // El tope solo rige para carpetas (§7.4); elegir muchos archivos sueltos sigue como siempre.
+    const isFolderUpload = plan.accepted.some((item) => item.dirs.length > 0)
+    if (isFolderUpload && plan.accepted.length > MAX_FOLDER_UPLOAD_FILES) {
+      toast.error(tooManyFilesMessage(plan.accepted.length))
+      return 0
+    }
+
+    for (const message of describeSkippedFiles(plan)) toast.error(message)
+    if (plan.accepted.length === 0) return 0
+
+    const newEntries: UploadQueueEntry[] = plan.accepted.map(({ file, dirs }) => ({
+      id: crypto.randomUUID(),
+      file,
+      folderId: target.folderId,
+      folderName: dirs.length > 0 ? [target.folderName, ...dirs].join('/') : target.folderName,
+      ...(dirs.length > 0 ? { subPath: dirs } : {}),
+      status: 'queued',
+      progress: 0,
+      uploadedBytes: 0,
+      speedBytesPerSec: null,
+      totalChunks: 0,
+      chunks: [],
+    }))
+    setEntries((current) => [...current, ...newEntries])
+    return newEntries.length
+  }, [])
+
   const addFiles = useCallback(
     (files: File[], target: UploadTarget | null = activeTarget): number => {
       if (!target) return 0
-
-      // CLAUDE.md §5.4: el backend solo valida la extensión al final de la subida
-      // (al ensamblar, en background); se rechaza aquí para no subir un archivo
-      // grande entero y perderlo al final.
-      const accepted = files.filter((file) => isAllowedExtension(file.name))
-      const rejected = files.filter((file) => !isAllowedExtension(file.name))
-      if (rejected.length > 0) {
-        const detail = rejected
-          .slice(0, 3)
-          .map((file) => `"${file.name}"${getExtension(file.name) ? '' : ' (sin extensión)'}`)
-          .join(', ')
-        const more = rejected.length > 3 ? ` y ${rejected.length - 3} más` : ''
-        toast.error(
-          rejected.length === 1
-            ? `${detail}: tipo de archivo no admitido`
-            : `${rejected.length} archivos con tipo no admitido: ${detail}${more}`,
-        )
-      }
-      if (accepted.length === 0) return 0
-
-      const newEntries: UploadQueueEntry[] = accepted.map((file) => ({
-        id: crypto.randomUUID(),
-        file,
-        folderId: target.folderId,
-        folderName: target.folderName,
-        status: 'queued',
-        progress: 0,
-        uploadedBytes: 0,
-        speedBytesPerSec: null,
-        totalChunks: 0,
-        chunks: [],
-      }))
-      setEntries((current) => [...current, ...newEntries])
-      return accepted.length
+      return enqueueTree(
+        files.map((file) => ({ file, dirs: [] })),
+        target,
+      )
     },
-    [activeTarget],
+    [activeTarget, enqueueTree],
+  )
+
+  const addFolderFiles = useCallback(
+    (files: File[], target: UploadTarget | null = activeTarget): number => {
+      if (!target) return 0
+      if (files.length > MAX_FOLDER_SCAN_FILES) {
+        toast.error(scanLimitMessage())
+        return 0
+      }
+      return enqueueTree(treeFilesFromRelativePaths(files), target)
+    },
+    [activeTarget, enqueueTree],
+  )
+
+  const addDropped = useCallback(
+    async (dropped: DroppedItems, target: UploadTarget | null = activeTarget): Promise<number> => {
+      if (!target) return 0
+      if (dropped.directories.length === 0) return addFiles(dropped.files, target)
+
+      const scan = await scanWithFeedback(dropped.directories)
+      // Las carpetas se descartan enteras (una lectura a medias subiría un árbol
+      // incompleto sin avisar), pero los archivos sueltos soltados con ellas no
+      // dependen de eso y se suben igualmente.
+      if (scan.exceededScanLimit) {
+        toast.error(scanLimitMessage())
+        return addFiles(dropped.files, target)
+      }
+      if (scan.unreadable > 0) toast.error(unreadableMessage(scan.unreadable))
+      if (scan.files.length === 0 && scan.unreadable === 0 && dropped.files.length === 0) {
+        toast('La carpeta no tiene archivos que subir (las carpetas vacías no se crean)')
+        return 0
+      }
+
+      return enqueueTree([...dropped.files.map((file) => ({ file, dirs: [] })), ...scan.files], target)
+    },
+    [activeTarget, addFiles, enqueueTree],
   )
 
   const cancelEntry = useCallback(
@@ -469,6 +612,8 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
       openPanel,
       closePanel,
       addFiles,
+      addDropped,
+      addFolderFiles,
       cancelEntry,
       retryEntry,
       retryAllFailed,
@@ -482,6 +627,8 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
       openPanel,
       closePanel,
       addFiles,
+      addDropped,
+      addFolderFiles,
       cancelEntry,
       retryEntry,
       retryAllFailed,
