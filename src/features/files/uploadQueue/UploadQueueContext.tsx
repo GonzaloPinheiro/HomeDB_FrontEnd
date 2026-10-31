@@ -37,11 +37,9 @@ import {
 import { RateLimitGate, withRateLimitRetry } from './rateLimit'
 import { SpeedTracker } from './speed'
 import {
-  MAX_FOLDER_UPLOAD_FILES,
   describeSkippedFiles,
   planTreeUpload,
   scanLimitMessage,
-  tooManyFilesMessage,
   unreadableMessage,
 } from './treeUpload'
 import type { ChunkStatus, UploadQueueEntry, UploadTarget } from './types'
@@ -465,13 +463,6 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
     // ensamblar, en background), y rechaza los archivos de 0 bytes en `init`; se
     // descartan aquí para no subir un archivo grande entero y perderlo al final.
     const plan = planTreeUpload(items)
-
-    // El tope solo rige para carpetas (§7.4); elegir muchos archivos sueltos sigue como siempre.
-    const isFolderUpload = plan.accepted.some((item) => item.dirs.length > 0)
-    if (isFolderUpload && plan.accepted.length > MAX_FOLDER_UPLOAD_FILES) {
-      toast.error(tooManyFilesMessage(plan.accepted.length))
-      return 0
-    }
 
     for (const message of describeSkippedFiles(plan)) toast.error(message)
     if (plan.accepted.length === 0) return 0
