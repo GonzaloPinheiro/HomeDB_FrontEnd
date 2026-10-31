@@ -12,11 +12,29 @@ import { formatBytes } from '@/shared/lib/formatBytes'
 // bandeja no habría forma de saberlo ni de volver a abrir el detalle.
 export function UploadTray() {
   const { hasModule } = usePermissions()
-  const { entries, isPanelOpen, openPanel } = useUploadQueue()
+  const { entries, interruptedUploads, isPanelOpen, openPanel } = useUploadQueue()
 
   // Los endpoints de subida exigen el módulo Files — sin él, la cola siempre
   // está vacía, pero se guarda explícito igual que StorageWidget (§6.12).
-  if (!hasModule('Files') || entries.length === 0 || isPanelOpen) return null
+  if (!hasModule('Files') || isPanelOpen) return null
+
+  // §7.4: tras recargar la cola está vacía, pero el servidor puede tener subidas a
+  // medias. Sin este aviso no habría forma de enterarse ni de reanudarlas: solo se
+  // muestra si no hay nada más, porque con entradas en la cola el panel ya las lista.
+  if (entries.length === 0) {
+    if (interruptedUploads.length === 0) return null
+    const count = interruptedUploads.length
+    return (
+      <button
+        type="button"
+        onClick={() => openPanel()}
+        className="fixed bottom-4 right-4 z-40 flex items-center gap-2 rounded-full border border-border bg-card px-4 py-2.5 text-sm text-text-primary shadow-md transition-colors hover:bg-surface-alt"
+      >
+        <CircleAlert className="h-4 w-4 shrink-0 text-warning-text" aria-hidden />
+        {count === 1 ? '1 subida sin terminar' : `${count} subidas sin terminar`}
+      </button>
+    )
+  }
 
   const activeEntries = entries.filter((e) => e.status === 'uploading' || e.status === 'queued')
   const uploadingEntries = entries.filter((e) => e.status === 'uploading')

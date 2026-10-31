@@ -27,6 +27,7 @@ import { cn } from '@/shared/lib/utils'
 import { useUploadQueue } from '../uploadQueue/UploadQueueContext'
 import { estimateRemainingMs } from '../uploadQueue/speed'
 import type { ChunkStatus, UploadQueueEntry } from '../uploadQueue/types'
+import { InterruptedUploads } from './InterruptedUploads'
 
 // CLAUDE.md §6.4/§6.5/§6.16: panel único de subidas, montado una vez en
 // AppShell (sin props) — lee siempre del UploadQueueProvider global, nunca de
@@ -150,6 +151,9 @@ export function UploadModal() {
           // CLAUDE.md §6.16: panel abierto desde la bandeja en otra pantalla — solo consulta.
           <p className="text-xs text-text-muted">Ve a Archivos para añadir más archivos.</p>
         ) : null}
+
+        {/* Subidas que quedaron a medias en una visita anterior (§7.4) */}
+        <InterruptedUploads />
 
         {/* Pausa global por rate limit (§7.4) — las subidas se reanudan solas */}
         {rateLimitedUntil !== null && <RateLimitNotice until={rateLimitedUntil} />}
