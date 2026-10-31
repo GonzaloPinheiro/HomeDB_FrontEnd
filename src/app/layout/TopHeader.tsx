@@ -7,7 +7,6 @@ import {
   Settings,
   ShieldCheck,
 } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import { Avatar, AvatarFallback } from '@/shared/components/ui/avatar'
@@ -22,6 +21,8 @@ import {
 } from '@/shared/components/ui/dropdown-menu'
 import { useAuth } from '@/shared/hooks/useAuth'
 
+import { useSettingsModal } from '../settings/useSettingsModal'
+
 type TopHeaderProps = {
   onToggleSidebar: () => void
 }
@@ -32,7 +33,7 @@ type TopHeaderProps = {
 // Cerrar sesión — lista pensada para crecer).
 export function TopHeader({ onToggleSidebar }: TopHeaderProps) {
   const { claims, logout } = useAuth()
-  const navigate = useNavigate()
+  const settingsModal = useSettingsModal()
   const initials = (claims?.username ?? '?').slice(0, 2).toUpperCase()
 
   return (
@@ -87,11 +88,11 @@ export function TopHeader({ onToggleSidebar }: TopHeaderProps) {
               <span className="text-xs font-normal text-text-secondary">{claims?.role}</span>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => navigate('/account/settings')}>
+            <DropdownMenuItem onSelect={() => settingsModal.open('profile')}>
               <Settings />
               Ajustes
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => navigate('/account/permissions')}>
+            <DropdownMenuItem onSelect={() => settingsModal.open('permissions')}>
               <ShieldCheck />
               Mis permisos
             </DropdownMenuItem>

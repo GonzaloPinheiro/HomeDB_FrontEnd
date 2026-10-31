@@ -6,19 +6,22 @@ import { usePermissions } from '@/shared/hooks/usePermissions'
 import { ALL_MODULES, MODULE_LABELS } from '@/shared/lib/moduleLabels'
 import { cn } from '@/shared/lib/utils'
 
-// Vista de SOLO LECTURA de los permisos propios — un usuario no puede
-// cambiárselos a sí mismo (§5.3). Reutiliza usePermissions (§7.3), sin
-// duplicar la query de /users/me/permissions.
-export default function MyPermissionsPage() {
+import { SettingsPanel } from '../SettingsLayout'
+
+// Vista de SOLO LECTURA de los permisos propios — un usuario no puede cambiárselos a sí
+// mismo (§5.3). Reutiliza usePermissions (§7.3), sin duplicar la query de
+// /users/me/permissions.
+export function PermissionsSection() {
   const { isAdmin, hasModule, isLoading } = usePermissions()
 
   return (
-    <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 p-4 md:p-6">
-      <h1 className="text-xl font-semibold text-text-primary">Mis permisos</h1>
-
+    <SettingsPanel
+      title="Permisos"
+      description="A qué módulos tienes acceso. Los gestiona un administrador."
+    >
       {isAdmin ? (
-        // §7.3: para un Admin ni siquiera se consulta la query (puede no tener
-        // fila de permisos) — mensaje informativo en vez del grid
+        // §7.3: para un Admin ni siquiera se consulta la query (puede no tener fila de
+        // permisos) — mensaje informativo en vez del grid
         <EmptyState
           icon={ShieldCheck}
           title="Acceso completo"
@@ -38,19 +41,23 @@ export default function MyPermissionsPage() {
             return (
               <div
                 key={module}
-                className="flex items-center gap-3 rounded-xl border border-border bg-card p-4"
+                className="flex items-center gap-3 rounded-xl border border-border bg-surface p-3.5"
               >
                 <div
                   className={cn(
                     'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg',
-                    active ? 'bg-accent-tint-bg text-accent-tint-text' : 'bg-surface text-text-faint',
+                    active
+                      ? 'bg-accent-tint-bg text-accent-tint-text'
+                      : 'bg-surface-alt text-text-faint',
                   )}
                 >
                   <ModuleIcon className="h-4 w-4" aria-hidden />
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-text-primary">{label}</p>
-                  <p className={cn('text-xs', active ? 'text-accent-tint-text' : 'text-text-muted')}>
+                  <p
+                    className={cn('text-xs', active ? 'text-accent-tint-text' : 'text-text-muted')}
+                  >
                     {active ? 'Activo' : 'Inactivo'}
                   </p>
                 </div>
@@ -59,6 +66,6 @@ export default function MyPermissionsPage() {
           })}
         </div>
       )}
-    </div>
+    </SettingsPanel>
   )
 }
