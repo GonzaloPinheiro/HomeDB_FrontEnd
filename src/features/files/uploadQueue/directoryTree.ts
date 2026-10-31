@@ -16,11 +16,10 @@ export type ScanResult = {
 }
 
 /**
- * Tope de archivos que se leen de una carpeta antes de rendirse. No es el límite
- * de lo que se sube (`MAX_FOLDER_UPLOAD_FILES`, treeUpload.ts, que cuenta solo lo
- * que realmente se encola): es una salvaguarda para que soltar algo como un
- * `node_modules` (cientos de miles de archivos) no se quede minutos leyendo ni
- * llenando memoria antes de poder avisar.
+ * Tope de archivos que se leen de una carpeta antes de rendirse. No es un límite
+ * de lo que se sube (no lo hay, CLAUDE.md §7.4): es una salvaguarda para que soltar
+ * algo como un `node_modules` (cientos de miles de archivos) no se quede minutos
+ * leyendo ni llenando memoria antes de poder avisar.
  */
 export const MAX_FOLDER_SCAN_FILES = 5000
 

@@ -7,14 +7,9 @@ import { MAX_FOLDER_SCAN_FILES, type TreeFile } from './directoryTree'
 // CLAUDE.md §7.4: reglas de qué se encola al subir archivos o una carpeta. Lógica
 // pura (sin React ni red), testeada en treeUpload.test.ts (§9).
 
-/**
- * Tope de archivos que se encolan al subir una carpeta (los que de verdad se
- * subirían, no los que se descartan). Cada archivo es una fila de la cola y cuesta
- * unas 4 peticiones del rate limit global (500/min, compartido con toda la app):
- * un árbol enorme saturaría la cola y la lista del panel. Para algo mayor se sube
- * por partes. Es un solo número: subirlo o bajarlo es tocar solo este valor.
- */
-export const MAX_FOLDER_UPLOAD_FILES = 500
+// CLAUDE.md §7.4: no hay tope de archivos encolados al subir una carpeta. El rate limit
+// global lo absorbe `RateLimitGate` (rateLimit.ts) y la cola procesa a su ritmo; el único
+// tope es el de LECTURA del árbol (`MAX_FOLDER_SCAN_FILES`, directoryTree.ts).
 
 // Basura que el sistema operativo mete en las carpetas y que el usuario no eligió
 // ni sabe que existe: sin esto, toda carpeta de un Mac avisaría de que ".DS_Store"
@@ -95,13 +90,6 @@ export function describeSkippedFiles(plan: TreeUploadPlan): string[] {
 
 export function unreadableMessage(count: number): string {
   return `${count} ${plural(count, 'elemento no se pudo leer y se ha omitido', 'elementos no se pudieron leer y se han omitido')}`
-}
-
-export function tooManyFilesMessage(count: number): string {
-  return (
-    `La carpeta tiene ${formatInteger(count)} archivos para subir y el máximo por subida es ` +
-    `${formatInteger(MAX_FOLDER_UPLOAD_FILES)}. Súbela por partes.`
-  )
 }
 
 export function scanLimitMessage(): string {

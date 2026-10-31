@@ -2,12 +2,10 @@ import { describe, expect, it } from 'vitest'
 
 import type { TreeFile } from './directoryTree'
 import {
-  MAX_FOLDER_UPLOAD_FILES,
   describeSkippedFiles,
   isValidFolderName,
   planTreeUpload,
   scanLimitMessage,
-  tooManyFilesMessage,
   unreadableMessage,
 } from './treeUpload'
 
@@ -123,11 +121,10 @@ describe('describeSkippedFiles', () => {
   })
 })
 
-describe('mensajes de límite', () => {
-  it('el de demasiados archivos da el total real y el máximo con separador de miles', () => {
-    expect(tooManyFilesMessage(1284)).toBe(
-      `La carpeta tiene 1.284 archivos para subir y el máximo por subida es ${MAX_FOLDER_UPLOAD_FILES}. Súbela por partes.`,
-    )
+describe('límites y mensajes', () => {
+  it('no hay tope de archivos encolados: un árbol grande se acepta entero', () => {
+    const many: TreeFile[] = Array.from({ length: 2000 }, (_, i) => item(`f${i}.txt`, ['Grande']))
+    expect(planTreeUpload(many).accepted).toHaveLength(2000)
   })
 
   it('el de lectura da el tope de lectura', () => {
