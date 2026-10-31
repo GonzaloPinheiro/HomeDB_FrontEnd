@@ -31,3 +31,23 @@ export function getExtension(fileName: string): string {
 export function isAllowedExtension(fileName: string): boolean {
   return ALLOWED_EXTENSIONS.has(getExtension(fileName))
 }
+
+const MAX_NAMES_IN_MESSAGE = 3
+
+/**
+ * Texto del aviso por archivos rechazados por su extensión, o `null` si no hay
+ * ninguno. Nombra hasta 3 (con "(sin extensión)" cuando es el motivo) y cuenta
+ * el resto — misma redacción al añadir archivos sueltos que al subir una carpeta.
+ */
+export function rejectedExtensionsMessage(rejectedFileNames: string[]): string | null {
+  if (rejectedFileNames.length === 0) return null
+  const detail = rejectedFileNames
+    .slice(0, MAX_NAMES_IN_MESSAGE)
+    .map((name) => `"${name}"${getExtension(name) ? '' : ' (sin extensión)'}`)
+    .join(', ')
+  const more =
+    rejectedFileNames.length > MAX_NAMES_IN_MESSAGE ? ` y ${rejectedFileNames.length - MAX_NAMES_IN_MESSAGE} más` : ''
+  return rejectedFileNames.length === 1
+    ? `${detail}: tipo de archivo no admitido`
+    : `${rejectedFileNames.length} archivos con tipo no admitido: ${detail}${more}`
+}

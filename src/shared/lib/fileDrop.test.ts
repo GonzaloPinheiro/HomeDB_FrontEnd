@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest'
 
-import { dataTransferHasFiles, extractFiles, nameForPastedFile, type DataTransferLike } from './fileDrop'
+import { dataTransferHasFiles, extractDroppedItems, nameForPastedFile, type DataTransferLike } from './fileDrop'
 
 function item(kind: string, file: File | null, isDirectory?: boolean) {
   return {
     kind,
     getAsFile: () => file,
-    webkitGetAsEntry: isDirectory === undefined ? undefined : () => ({ isDirectory }),
+    webkitGetAsEntry:
+      isDirectory === undefined
+        ? undefined
+        : () => ({ isFile: !isDirectory, isDirectory, name: file?.name ?? 'entrada' }),
   }
 }
 
@@ -23,34 +26,39 @@ describe('dataTransferHasFiles', () => {
   })
 })
 
-describe('extractFiles', () => {
+describe('extractDroppedItems', () => {
   const a = new File(['a'], 'a.txt')
   const b = new File(['b'], 'b.txt')
 
   it('devuelve los archivos de items', () => {
     const dt: DataTransferLike = { files: [a, b], items: [item('file', a, false), item('file', b, false)] }
-    expect(extractFiles(dt)).toEqual({ files: [a, b], directoryCount: 0 })
+    expect(extractDroppedItems(dt)).toEqual({ files: [a, b], directories: [] })
   })
 
-  it('separa las carpetas y las cuenta', () => {
+  it('separa las carpetas de los archivos y devuelve la entrada de carpeta, no el File fantasma', () => {
     const folder = new File([], 'carpeta')
     const dt: DataTransferLike = { files: [a, folder], items: [item('file', a, false), item('file', folder, true)] }
-    expect(extractFiles(dt)).toEqual({ files: [a], directoryCount: 1 })
+
+    const { files, directories } = extractDroppedItems(dt)
+    expect(files).toEqual([a])
+    expect(directories).toHaveLength(1)
+    expect(directories[0].name).toBe('carpeta')
+    expect(directories[0].isDirectory).toBe(true)
   })
 
   it('un item de texto no cuenta como archivo', () => {
     const dt: DataTransferLike = { files: [], items: [item('string', null)] }
-    expect(extractFiles(dt)).toEqual({ files: [], directoryCount: 0 })
+    expect(extractDroppedItems(dt)).toEqual({ files: [], directories: [] })
   })
 
   it('si el navegador no expone webkitGetAsEntry trata el item como archivo', () => {
     const dt: DataTransferLike = { files: [a], items: [item('file', a)] }
-    expect(extractFiles(dt)).toEqual({ files: [a], directoryCount: 0 })
+    expect(extractDroppedItems(dt)).toEqual({ files: [a], directories: [] })
   })
 
   it('sin items (portapapeles de algunos navegadores) usa files', () => {
-    expect(extractFiles({ files: [a, b] })).toEqual({ files: [a, b], directoryCount: 0 })
-    expect(extractFiles({ files: [a], items: [] })).toEqual({ files: [a], directoryCount: 0 })
+    expect(extractDroppedItems({ files: [a, b] })).toEqual({ files: [a, b], directories: [] })
+    expect(extractDroppedItems({ files: [a], items: [] })).toEqual({ files: [a], directories: [] })
   })
 })
 

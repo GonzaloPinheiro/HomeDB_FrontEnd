@@ -5,18 +5,21 @@ import {
   ChevronRight,
   CircleAlert,
   Folder,
+  FolderUp,
   Hourglass,
   Loader2,
   RotateCcw,
   Upload,
   X,
 } from 'lucide-react'
-import { useEffect, useRef, useState, type ChangeEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
+import { toast } from 'sonner'
 
 import { Modal } from '@/shared/components/Modal'
 import { Button } from '@/shared/components/ui/button'
 import { Progress } from '@/shared/components/ui/progress'
 import { useFileDropZone } from '@/shared/hooks/useFileDropZone'
+import { useMediaQuery } from '@/shared/hooks/useMediaQuery'
 import { formatBytes } from '@/shared/lib/formatBytes'
 import { formatDuration } from '@/shared/lib/formatDuration'
 import { cn } from '@/shared/lib/utils'
@@ -48,6 +51,8 @@ export function UploadModal() {
     activeTarget,
     closePanel,
     addFiles,
+    addDropped,
+    addFolderFiles,
     cancelEntry,
     retryEntry,
     retryAllFailed,
@@ -55,9 +60,28 @@ export function UploadModal() {
   } = useUploadQueue()
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
+  const folderInputRef = useRef<HTMLInputElement | null>(null)
+
+  // CLAUDE.md §6.4: elegir una carpeta con el selector del sistema solo se ofrece con
+  // puntero preciso (escritorio). `webkitdirectory` lo ignoran los navegadores
+  // móviles (p. ej. Chrome en Android abriría un selector de archivos), y un botón
+  // que promete una carpeta y da archivos sueltos engaña; en táctil la carpeta se
+  // sube arrastrándola o desde el navegador de escritorio.
+  const canPickFolder = useMediaQuery('(pointer: fine)')
+
+  // `webkitdirectory` no está en los tipos de JSX de React: se pone en la propiedad del DOM.
+  const setFolderInput = useCallback((node: HTMLInputElement | null) => {
+    folderInputRef.current = node
+    if (node) node.webkitdirectory = true
+  }, [])
 
   const onInputChange = (event: ChangeEvent<HTMLInputElement>) => {
     if (event.target.files?.length) addFiles(Array.from(event.target.files))
+    event.target.value = ''
+  }
+
+  const onFolderInputChange = (event: ChangeEvent<HTMLInputElement>) => {
+    if (event.target.files?.length) addFolderFiles(Array.from(event.target.files))
     event.target.value = ''
   }
 
@@ -66,7 +90,9 @@ export function UploadModal() {
   // del explorador (§6.3). Reutiliza la misma mecánica que ella (useFileDropZone).
   const { isDragging: isDragOver, dropProps } = useFileDropZone({
     scope: 'element',
-    onFiles: (files) => addFiles(files),
+    onDrop: (dropped) => {
+      addDropped(dropped).catch(() => toast.error('No se pudo leer lo que has soltado'))
+    },
   })
 
   // 'processing' cuenta como activa: el archivo aún no está disponible (§7.4).
@@ -107,9 +133,18 @@ export function UploadModal() {
               )}
             >
               <Upload className="h-5 w-5" aria-hidden />
-              Arrastra archivos aquí o haz clic para elegirlos
+              Arrastra archivos o carpetas aquí o haz clic para elegir archivos
             </button>
             <input ref={inputRef} type="file" multiple hidden onChange={onInputChange} />
+            {canPickFolder && (
+              <>
+                <Button type="button" variant="outline" size="sm" className="self-start" onClick={() => folderInputRef.current?.click()}>
+                  <FolderUp aria-hidden />
+                  Subir una carpeta
+                </Button>
+                <input ref={setFolderInput} type="file" multiple hidden onChange={onFolderInputChange} />
+              </>
+            )}
           </>
         ) : entries.length > 0 ? (
           // CLAUDE.md §6.16: panel abierto desde la bandeja en otra pantalla — solo consulta.

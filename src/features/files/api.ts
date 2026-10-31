@@ -87,16 +87,25 @@ async function moveFileRequest(fileId: number, targetFolderId: number | null) {
   return fileItemSchema.parse(unwrap(response.data))
 }
 
+// También las usa la subida de carpetas (uploadQueue/UploadQueueContext.tsx), que
+// crea y consulta carpetas fuera de un componente, de ahí que no sean hooks.
+export async function createFolderRequest(name: string, parentFolderId: number | null) {
+  const response = await api.post<ApiObjResponse<unknown>>('/folders', {
+    name,
+    parentFolderId,
+  })
+  return folderSchema.parse(unwrap(response.data))
+}
+
+export async function listSubfoldersRequest(parentFolderId: number | null) {
+  const response = await api.get<ApiObjResponse<unknown>>(subfoldersUrl(parentFolderId))
+  return folderSchema.array().parse(unwrap(response.data))
+}
+
 export function useCreateFolder(parentFolderId: number | null) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: async (name: string) => {
-      const response = await api.post<ApiObjResponse<unknown>>('/folders', {
-        name,
-        parentFolderId,
-      })
-      return folderSchema.parse(unwrap(response.data))
-    },
+    mutationFn: (name: string) => createFolderRequest(name, parentFolderId),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: filesKeys.contents(parentFolderId) })
     },
