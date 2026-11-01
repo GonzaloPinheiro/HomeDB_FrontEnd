@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 
 import { toApiError } from '@/shared/api/client'
 import { FloatCard } from '@/shared/components/FloatCard'
+import { SegmentedControl, type SegmentedOption } from '@/shared/components/SegmentedControl'
 import { Input } from '@/shared/components/ui/input'
 import { Skeleton } from '@/shared/components/ui/skeleton'
 import { cn } from '@/shared/lib/utils'
@@ -15,11 +16,10 @@ import {
   toChartPoints,
   type HistoryRange,
 } from '../history'
-import { useNow } from '../useNow'
+import { useNow } from '@/shared/hooks/useNow'
 import { HISTORY_CHART_HEIGHT, HistoryChart, type HistoryView } from './HistoryChart'
-import { SegmentedControl } from './SegmentedControl'
 
-const VIEW_OPTIONS: ReadonlyArray<{ value: HistoryView; label: string }> = [
+const VIEW_OPTIONS: ReadonlyArray<SegmentedOption<HistoryView>> = [
   { value: 'count', label: 'Consultas' },
   { value: 'percent', label: '% bloqueo' },
 ]
@@ -79,7 +79,7 @@ export function HistoryCard({ thresholdPercent }: { thresholdPercent: number | n
 
       <div className="mt-4 flex-1">
         {!rangeCheck.ok ? (
-          <div className={cn(PLACEHOLDER_CLASSES, 'text-sm text-critical-text')} style={placeholderStyle}>
+          <div className={cn(PLACEHOLDER_CLASSES, 'bg-critical-bg text-sm text-critical-text')} style={placeholderStyle}>
             {rangeCheck.message}
           </div>
         ) : history.isPending ? (

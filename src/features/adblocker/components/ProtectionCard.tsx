@@ -3,6 +3,7 @@ import { ChevronDown, CirclePause, ExternalLink, Pause, Play, ShieldCheck, Shiel
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 
 import { FloatCard } from '@/shared/components/FloatCard'
+import { InlineMessage } from '@/shared/components/InlineMessage'
 import { Modal } from '@/shared/components/Modal'
 import { Button } from '@/shared/components/ui/button'
 import { Input } from '@/shared/components/ui/input'
@@ -21,7 +22,7 @@ import {
   type ProtectionMode,
 } from '../presentation'
 import type { AdBlockerStatus } from '../types'
-import { useNow } from '../useNow'
+import { useNow } from '@/shared/hooks/useNow'
 
 // Duración en minutos y etiqueta de los atajos del menú de pausa.
 const PAUSE_PRESETS = [
@@ -125,7 +126,7 @@ export function ProtectionCard({ status }: { status: AdBlockerStatus }) {
                 : style.label}
             </span>
             {mode === 'paused' && (
-              <span className="font-mono text-[13px] text-warning-text">quedan {remaining}</span>
+              <span className="font-mono text-[13px] text-text-secondary">quedan {remaining}</span>
             )}
           </div>
           <p className="mt-1.5 text-sm text-text-secondary">{describeMode(mode, remaining)}</p>
@@ -170,13 +171,13 @@ export function ProtectionCard({ status }: { status: AdBlockerStatus }) {
                     Personalizado
                   </Button>
                 </div>
-                {customError !== null && <p className="text-xs text-critical-text">{customError}</p>}
+                {customError !== null && <InlineMessage tone="critical">{customError}</InlineMessage>}
                 <div className="h-px bg-border-light" />
                 <Button
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className="justify-start text-critical-text hover:bg-critical-bg hover:text-critical-text"
+                  className="justify-start hover:bg-critical-bg hover:text-critical-text"
                   onClick={askDisableUntilReactivated}
                 >
                   Hasta reactivar…

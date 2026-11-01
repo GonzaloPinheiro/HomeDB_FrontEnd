@@ -102,7 +102,7 @@ export function HistoryChart({ points, view, range, thresholdPercent }: HistoryC
             label={{
               value: `Umbral ${thresholdPercent} %`,
               position: 'insideTopRight',
-              fill: 'var(--warning-text)',
+              fill: 'var(--text-secondary)',
               fontSize: 11,
               fontWeight: 600,
             }}

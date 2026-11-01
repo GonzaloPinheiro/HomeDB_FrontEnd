@@ -19,6 +19,7 @@ const FilesPage = lazy(() => import('@/features/files/FilesPage'))
 const TorrentsPage = lazy(() => import('@/features/torrents/TorrentsPage'))
 const MonitorPage = lazy(() => import('@/features/system-monitor/MonitorPage'))
 const AdBlockerPage = lazy(() => import('@/features/adblocker/AdBlockerPage'))
+const VpnPage = lazy(() => import('@/features/vpn/VpnPage'))
 const UsersPage = lazy(() => import('@/features/admin-users/UsersPage'))
 const SystemLogsPage = lazy(() => import('@/features/admin-system-logs/SystemLogsPage'))
 const AuditLogsPage = lazy(() => import('@/features/admin-audit-logs/AuditLogsPage'))
@@ -119,6 +120,17 @@ export const router = createBrowserRouter([
               <RequireAdmin>
                 <ErrorBoundary sectionLabel="AdGuard">
                   <AdBlockerPage />
+                </ErrorBoundary>
+              </RequireAdmin>
+            ),
+          },
+          // VPN (§6.22): igual que AdGuard, solo rol Admin y sin módulo propio
+          {
+            path: '/admin/vpn',
+            element: (
+              <RequireAdmin>
+                <ErrorBoundary sectionLabel="la VPN">
+                  <VpnPage />
                 </ErrorBoundary>
               </RequireAdmin>
             ),

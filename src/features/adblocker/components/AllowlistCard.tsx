@@ -2,6 +2,7 @@ import { Trash2 } from 'lucide-react'
 import { useState, type KeyboardEvent } from 'react'
 
 import { FloatCard } from '@/shared/components/FloatCard'
+import { InlineMessage } from '@/shared/components/InlineMessage'
 import { Button } from '@/shared/components/ui/button'
 import { Input } from '@/shared/components/ui/input'
 import { Skeleton } from '@/shared/components/ui/skeleton'
@@ -77,7 +78,7 @@ export function AllowlistCard() {
           Añadir
         </Button>
       </div>
-      {error !== null && <p className="text-xs text-critical-text">{error}</p>}
+      {error !== null && <InlineMessage tone="critical">{error}</InlineMessage>}
 
       <div className="flex max-h-[230px] flex-col overflow-auto" aria-busy={allowlist.isPending}>
         {allowlist.isPending ? (

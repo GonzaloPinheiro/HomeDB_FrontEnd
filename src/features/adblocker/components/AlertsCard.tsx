@@ -1,4 +1,5 @@
 import { FloatCard } from '@/shared/components/FloatCard'
+import { InlineMessage } from '@/shared/components/InlineMessage'
 import { Button } from '@/shared/components/ui/button'
 import { Input } from '@/shared/components/ui/input'
 import { Skeleton } from '@/shared/components/ui/skeleton'
@@ -91,8 +92,8 @@ export function AlertsCard({ currentPercent }: { currentPercent: number | null }
           Guardar
         </Button>
       </div>
-      {!threshold.ok && <p className="-mt-1.5 text-xs text-critical-text">{threshold.message}</p>}
-      {canSave && <p className="-mt-1.5 text-xs text-warning-text">Cambios sin guardar</p>}
+      {!threshold.ok && <InlineMessage tone="critical">{threshold.message}</InlineMessage>}
+      {canSave && <InlineMessage tone="warning">Cambios sin guardar</InlineMessage>}
     </FloatCard>
   )
 }

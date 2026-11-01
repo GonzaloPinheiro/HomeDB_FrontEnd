@@ -1,15 +1,22 @@
 import { cn } from '@/shared/lib/utils'
 
+export type SegmentedOption<T extends string> = {
+  value: T
+  label: string
+  /** Recuento opcional junto a la etiqueta (p. ej. "Activos 3"). */
+  count?: number
+}
+
 type SegmentedControlProps<T extends string> = {
   value: T
-  options: ReadonlyArray<{ value: T; label: string }>
+  options: ReadonlyArray<SegmentedOption<T>>
   onChange: (value: T) => void
   'aria-label': string
 }
 
 // Mismo aspecto que los chips de rango del Monitor (§6.13): grupo con borde, opción activa en
 // acento. Con poco ancho (móvil) hace scroll horizontal en vez de recortarse, igual que la
-// tira de categorías de Torrents (§6.19).
+// tira de categorías de Torrents (§6.19). Compartido por AdGuard (§6.21) y VPN (§6.22).
 export function SegmentedControl<T extends string>({
   value,
   options,
@@ -38,6 +45,11 @@ export function SegmentedControl<T extends string>({
             )}
           >
             {option.label}
+            {option.count !== undefined && (
+              <span className={cn('ml-1.5 text-xs font-normal', value === option.value ? 'opacity-80' : 'text-text-muted')}>
+                {option.count}
+              </span>
+            )}
           </button>
         ))}
       </div>

@@ -4,6 +4,7 @@ import {
   Download,
   Folder,
   House,
+  Lock,
   ScrollText,
   ShieldCheck,
   Users,
@@ -26,7 +27,7 @@ type NavItem = {
   icon: LucideIcon
   /** Sin módulo = visible para cualquier usuario con sesión (ej. Inicio). */
   module?: AppModule
-  /** Solo rol Admin, sin módulo propio (ej. AdGuard, §6.21). Módulo activado no implica Admin (§5.3). */
+  /** Solo rol Admin, sin módulo propio (ej. AdGuard §6.21, VPN §6.22). Módulo activado no implica Admin (§5.3). */
   adminOnly?: boolean
   /** NavLink `end`: "/" no debe quedar activo en todas las rutas hijas. */
   end?: boolean
@@ -46,6 +47,7 @@ const PERSONAL_ITEMS: NavItem[] = [
 
 const ADMIN_ITEMS: NavItem[] = [
   { to: '/admin/adguard', label: 'AdGuard', icon: ShieldCheck, adminOnly: true },
+  { to: '/admin/vpn', label: 'VPN', icon: Lock, adminOnly: true },
   { to: '/admin/users', label: 'Usuarios', icon: Users, module: 'UserManagement' },
   { to: '/admin/logs', label: 'Registros', icon: ScrollText, module: 'SystemLogs' },
   { to: '/admin/audit-logs', label: 'Auditoría', icon: ClipboardList, module: 'AuditLogs' },

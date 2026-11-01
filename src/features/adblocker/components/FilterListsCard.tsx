@@ -11,7 +11,7 @@ import {
   isListStale,
   summarizeLists,
 } from '../presentation'
-import { useNow } from '../useNow'
+import { useNow } from '@/shared/hooks/useNow'
 
 // CLAUDE.md §6.21: salud de las listas de bloqueo, solo lectura (altas y bajas se gestionan
 // en el panel de AdGuard). Una lista sin actualizar en más de 7 días se resalta (Warning, §6.7).

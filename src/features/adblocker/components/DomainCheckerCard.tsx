@@ -3,6 +3,7 @@ import { useState, type KeyboardEvent } from 'react'
 
 import { toApiError } from '@/shared/api/client'
 import { FloatCard } from '@/shared/components/FloatCard'
+import { InlineMessage } from '@/shared/components/InlineMessage'
 import { Button } from '@/shared/components/ui/button'
 import { Input } from '@/shared/components/ui/input'
 import { notAvailableYet } from '@/shared/lib/notAvailableYet'
@@ -66,7 +67,7 @@ export function DomainCheckerCard() {
           Comprobar
         </Button>
       </div>
-      {error !== null && <p className="text-xs text-critical-text">{error}</p>}
+      {error !== null && <InlineMessage tone="critical">{error}</InlineMessage>}
 
       {check.isPending && (
         <div className="animate-pulse rounded-[10px] bg-surface px-3.5 py-3 text-[13px] text-text-secondary">
