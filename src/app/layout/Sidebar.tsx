@@ -5,6 +5,7 @@ import {
   Folder,
   House,
   ScrollText,
+  ShieldCheck,
   Users,
   type LucideIcon,
 } from 'lucide-react'
@@ -25,6 +26,8 @@ type NavItem = {
   icon: LucideIcon
   /** Sin módulo = visible para cualquier usuario con sesión (ej. Inicio). */
   module?: AppModule
+  /** Solo rol Admin, sin módulo propio (ej. AdGuard, §6.21). Módulo activado no implica Admin (§5.3). */
+  adminOnly?: boolean
   /** NavLink `end`: "/" no debe quedar activo en todas las rutas hijas. */
   end?: boolean
 }
@@ -42,6 +45,7 @@ const PERSONAL_ITEMS: NavItem[] = [
 ]
 
 const ADMIN_ITEMS: NavItem[] = [
+  { to: '/admin/adguard', label: 'AdGuard', icon: ShieldCheck, adminOnly: true },
   { to: '/admin/users', label: 'Usuarios', icon: Users, module: 'UserManagement' },
   { to: '/admin/logs', label: 'Registros', icon: ScrollText, module: 'SystemLogs' },
   { to: '/admin/audit-logs', label: 'Auditoría', icon: ClipboardList, module: 'AuditLogs' },
@@ -74,10 +78,10 @@ function SidebarLink({ item, collapsed }: { item: NavItem; collapsed: boolean })
 // oculta del todo. Cada entrada solo aparece si hasModule() lo confirma —
 // nunca una lista estática.
 export function Sidebar({ collapsed }: { collapsed: boolean }) {
-  const { hasModule, isLoading } = usePermissions()
+  const { hasModule, isAdmin, isLoading } = usePermissions()
 
   const personal = PERSONAL_ITEMS.filter((item) => !item.module || hasModule(item.module))
-  const admin = ADMIN_ITEMS.filter((item) => !item.module || hasModule(item.module))
+  const admin = ADMIN_ITEMS.filter((item) => (item.adminOnly ? isAdmin : !item.module || hasModule(item.module)))
 
   return (
     <aside
