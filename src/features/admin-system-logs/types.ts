@@ -39,12 +39,34 @@ export const logHealthSchema = z.object({
 })
 export type LogHealth = z.infer<typeof logHealthSchema>
 
+// GET /admin/logs/error-summary?hours= — LogErrorSummaryItemDto (verificado noviembre 2026).
+// OJO: pese al nombre, el backend agrupa las entradas de nivel **Critical** (excepciones no
+// controladas), no las de nivel Error (LogEntryRepository.GetErrorSummaryAsync).
+export const errorSummaryItemSchema = z.object({
+  operation: z.string(),
+  count: z.number(),
+})
+export type ErrorSummaryItem = z.infer<typeof errorSummaryItemSchema>
+export const errorSummarySchema = z.array(errorSummaryItemSchema)
+
+// GET /admin/logs/slow-operations?thresholdMs= — LogSlowOperationDto. `timeStamp` con S
+// mayúscula en C# -> wire `timeStamp`, igual que LogEntryDto (más arriba).
+export const slowOperationSchema = z.object({
+  operation: z.string(),
+  durationMs: z.number(),
+  timeStamp: z.string(),
+})
+export type SlowOperation = z.infer<typeof slowOperationSchema>
+export const slowOperationsSchema = z.array(slowOperationSchema)
+
 /**
- * Valores reales de `Level` que el backend escribe hoy (verificado por lectura
- * de OperationLogScope.cs y ExceptionHandlerMiddleware.cs en la auditoría de
- * Fase 5) — NO "Info"/"Error" como sugería el comentario de LogEntry.cs en el
- * backend, que no coincide con lo que el código realmente escribe. Se usa como
- * lista cerrada solo para el select de filtro; el badge (levelBadge.ts) sigue
- * siendo tolerante a cualquier string por si el backend cambia.
+ * Valores reales de `Level` que el backend escribe hoy (releído en noviembre 2026): `Information`
+ * (entradas/salidas de cada operación), `Warning` (excepciones de dominio esperadas, p. ej.
+ * un 404), `Error` (fallos de fondo y `AssembledFileSizeMismatch`: ExceptionHandlerMiddleware,
+ * UploadCompletionQueue, UploadCleanupBackgroundService, BackupBackgroundService) y `Critical`
+ * (excepción no controlada). En la auditoría de Fase 5 `Error` no aparecía en ningún punto de
+ * escritura; desde entonces el backend lo usa, así que los contadores de `/health` ya no son
+ * siempre 0. Lista cerrada solo para el select de filtro; el badge (levelBadge.ts) sigue siendo
+ * tolerante a cualquier string por si el backend cambia.
  */
-export const LOG_LEVELS = ['Information', 'Warning', 'Critical'] as const
+export const LOG_LEVELS = ['Information', 'Warning', 'Error', 'Critical'] as const

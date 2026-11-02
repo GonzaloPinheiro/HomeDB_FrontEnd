@@ -6,7 +6,14 @@ import { describe, expect, it, vi } from 'vitest'
 import { api } from '@/shared/api/client'
 import type { ApiObjResponse } from '@/shared/types/api'
 
-import { EMPTY_LOGS_FILTERS, logsKeys, useLogs, type LogsFilters } from './api'
+import {
+  EMPTY_LOGS_FILTERS,
+  logsKeys,
+  useErrorSummary,
+  useLogs,
+  useSlowOperations,
+  type LogsFilters,
+} from './api'
 
 function envelope<T>(data: T): ApiObjResponse<T> {
   return { result: true, data, errorCode: null, errorMessage: null }
@@ -46,5 +53,70 @@ describe('useLogs — cache por combinación de filtros/página', () => {
     await waitFor(() => {
       expect(queryClient.getQueryCache().getAll()).toHaveLength(2)
     })
+  })
+})
+
+function createWrapper() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  )
+  return { queryClient, wrapper }
+}
+
+describe('useErrorSummary', () => {
+  it('pide /admin/logs/error-summary con las horas y valida la respuesta', async () => {
+    const get = vi
+      .spyOn(api, 'get')
+      .mockResolvedValue({ data: envelope([{ operation: 'UploadChunkAsync()', count: 4 }]) })
+    const { wrapper } = createWrapper()
+
+    const { result } = renderHook(() => useErrorSummary(168), { wrapper })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(get).toHaveBeenCalledWith('/admin/logs/error-summary', { params: { hours: 168 } })
+    expect(result.current.data).toEqual([{ operation: 'UploadChunkAsync()', count: 4 }])
+  })
+
+  it('una respuesta con otra forma falla en Zod en vez de pintar datos rotos', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({ data: envelope([{ operation: 'X', total: 4 }]) })
+    const { wrapper } = createWrapper()
+
+    const { result } = renderHook(() => useErrorSummary(24), { wrapper })
+
+    await waitFor(() => expect(result.current.isError).toBe(true))
+  })
+
+  it('cada rango cachea por separado', () => {
+    expect(logsKeys.errorSummary(24)).not.toEqual(logsKeys.errorSummary(168))
+  })
+})
+
+describe('useSlowOperations', () => {
+  it('pide /admin/logs/slow-operations con el umbral y valida la respuesta', async () => {
+    const slow = { operation: 'GetFilesAsync()', durationMs: 4100, timeStamp: '2026-10-30T18:02:11Z' }
+    const get = vi.spyOn(api, 'get').mockResolvedValue({ data: envelope([slow]) })
+    const { wrapper } = createWrapper()
+
+    const { result } = renderHook(() => useSlowOperations(5000), { wrapper })
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    expect(get).toHaveBeenCalledWith('/admin/logs/slow-operations', { params: { thresholdMs: 5000 } })
+    expect(result.current.data).toEqual([slow])
+  })
+
+  it('el campo del timestamp es `timeStamp` (S mayúscula), no `timestamp`', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: envelope([{ operation: 'X', durationMs: 3000, timestamp: '2026-10-30T18:02:11Z' }]),
+    })
+    const { wrapper } = createWrapper()
+
+    const { result } = renderHook(() => useSlowOperations(2000), { wrapper })
+
+    await waitFor(() => expect(result.current.isError).toBe(true))
+  })
+
+  it('cada umbral cachea por separado', () => {
+    expect(logsKeys.slowOperations(2000)).not.toEqual(logsKeys.slowOperations(5000))
   })
 })

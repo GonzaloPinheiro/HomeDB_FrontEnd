@@ -7,8 +7,14 @@ describe('levelBadgeStyle', () => {
     expect(levelBadgeStyle('Warning').className).toContain('warning')
   })
 
-  it('Critical -> rojo apagado', () => {
-    expect(levelBadgeStyle('Critical').className).toContain('critical')
+  it('Error -> rojo apagado', () => {
+    expect(levelBadgeStyle('Error').className).toBe('bg-critical-bg text-critical-text')
+  })
+
+  it('Critical -> rojo con los colores invertidos, distinto de Error', () => {
+    const critical = levelBadgeStyle('Critical')
+    expect(critical.className).toBe('bg-critical-text text-critical-bg')
+    expect(critical.className).not.toBe(levelBadgeStyle('Error').className)
   })
 
   it('Information (valor real de "info" que escribe el backend) -> neutro', () => {
@@ -21,5 +27,10 @@ describe('levelBadgeStyle', () => {
     const style = levelBadgeStyle('Debug')
     expect(style.className).not.toContain('warning')
     expect(style.className).not.toContain('critical')
+  })
+
+  it('la etiqueta es siempre el nivel tal cual llega', () => {
+    expect(levelBadgeStyle('Error').label).toBe('Error')
+    expect(levelBadgeStyle('Debug').label).toBe('Debug')
   })
 })
