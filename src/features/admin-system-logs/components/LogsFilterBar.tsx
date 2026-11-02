@@ -9,7 +9,7 @@ import type { LogsFiltersState } from '../useLogsFilters'
 // CLAUDE.md §6.6: select de nivel + búsqueda de Operación siempre visibles; rango de fechas y
 // CorrelationId (campo técnico, poco frecuente) dentro del panel "Filtros".
 export function LogsFilterBar({ state }: { state: LogsFiltersState }) {
-  const { filters, setFilter, operationField } = state
+  const { filters, setFilter, textField } = state
 
   return (
     <FilterBar
@@ -70,8 +70,8 @@ export function LogsFilterBar({ state }: { state: LogsFiltersState }) {
         </SelectContent>
       </Select>
       <Input
-        value={operationField.value}
-        onChange={(event) => operationField.onChange(event.target.value)}
+        value={textField.value}
+        onChange={(event) => textField.onChange(event.target.value)}
         placeholder="Buscar por operación"
         className="h-9 w-full sm:w-56"
         aria-label="Buscar por operación"

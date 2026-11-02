@@ -1,13 +1,14 @@
 import { useRef } from 'react'
 
+import { PageHeader } from '@/shared/components/PageHeader'
+import { QueryRefreshButton } from '@/shared/components/QueryRefreshButton'
 import { useMediaQuery } from '@/shared/hooks/useMediaQuery'
 
-import type { LogsFilters } from '../api'
+import { logsKeys, type LogsFilters } from '../api'
 import { useLogsFilters } from '../useLogsFilters'
 import { CriticalErrorsCard } from './CriticalErrorsCard'
 import { LogsExplorer } from './LogsExplorer'
 import { LogsHealthCards } from './LogsHealthCards'
-import { LogsHeader } from './LogsHeader'
 import { SlowOperationsCard } from './SlowOperationsCard'
 
 // CLAUDE.md §6.23: de arriba abajo, de lo general a lo concreto —cifras de salud, dos análisis
@@ -29,7 +30,12 @@ export function AdminSystemLogsPage() {
   return (
     // §6.13/§6.18: mismo padding de página y hueco de 22px entre bloques que Inicio y Monitor
     <div className="flex min-h-full flex-col gap-[22px] px-4 py-6 sm:px-8 sm:py-[26px]">
-      <LogsHeader />
+      {/* Refrescar invalida la clave raíz: cifras, análisis (con staleTime) y tabla vuelven a pedirse */}
+      <PageHeader
+        eyebrow="Diagnóstico del servidor"
+        title="Registros"
+        actions={<QueryRefreshButton queryKey={logsKeys.all} />}
+      />
       <LogsHealthCards />
       {/* items-start: dos listas de longitud muy distinta no deben estirarse a la misma altura (hueco vacío) */}
       <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">

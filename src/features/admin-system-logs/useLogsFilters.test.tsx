@@ -46,7 +46,7 @@ describe('useLogsFilters', () => {
     expect(probe.logs.filters.operation).toBe('Upload')
     expect(probe.logs.page).toBe(3)
     expect(probe.logs.activeFilterCount).toBe(2)
-    expect(probe.logs.operationField.value).toBe('Upload')
+    expect(probe.logs.textField.value).toBe('Upload')
   })
 
   it('setFilter cambia solo ese filtro y vuelve a la primera página', () => {
@@ -67,8 +67,8 @@ describe('useLogsFilters', () => {
 
   it('escribir en Operación vuelca a la URL solo tras el retardo, y vuelve a la primera página', () => {
     const probe = setup('/admin/logs?page=2')
-    act(() => probe.logs.operationField.onChange('Get'))
-    expect(probe.logs.operationField.value).toBe('Get')
+    act(() => probe.logs.textField.onChange('Get'))
+    expect(probe.logs.textField.value).toBe('Get')
     expect(query(probe).has('operation')).toBe(false)
 
     act(() => vi.advanceTimersByTime(300))
@@ -88,17 +88,17 @@ describe('useLogsFilters', () => {
       correlationId: null,
     })
     expect(probe.logs.page).toBe(1)
-    expect(probe.logs.operationField.value).toBe('UploadChunkAsync()')
+    expect(probe.logs.textField.value).toBe('UploadChunkAsync()')
   })
 
   it('un drill-down NO es pisado por un texto a medio escribir (la carrera que evita useDebouncedField)', () => {
     const probe = setup('/admin/logs')
-    act(() => probe.logs.operationField.onChange('Gx'))
+    act(() => probe.logs.textField.onChange('Gx'))
     act(() => probe.logs.showOnly({ level: 'Critical', operation: 'UploadChunkAsync()' }))
     act(() => vi.advanceTimersByTime(1000))
 
     expect(query(probe).get('operation')).toBe('UploadChunkAsync()')
-    expect(probe.logs.operationField.value).toBe('UploadChunkAsync()')
+    expect(probe.logs.textField.value).toBe('UploadChunkAsync()')
   })
 
   it('clearFilters limpia filtros, página y campo de texto, pero conserva ?settings= del modal', () => {
@@ -106,7 +106,7 @@ describe('useLogsFilters', () => {
     act(() => probe.logs.clearFilters())
 
     expect(probe.logs.activeFilterCount).toBe(0)
-    expect(probe.logs.operationField.value).toBe('')
+    expect(probe.logs.textField.value).toBe('')
     expect(query(probe).get('settings')).toBe('security')
     expect(query(probe).has('level')).toBe(false)
   })
