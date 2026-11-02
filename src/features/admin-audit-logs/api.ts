@@ -5,7 +5,8 @@ import { toUtcDayEnd, toUtcDayStart } from '@/shared/lib/dateRangeQuery'
 import type { ApiObjResponse } from '@/shared/types/api'
 
 import { SENSITIVE_ACTIONS } from './actions'
-import { auditLogsPageSchema, userSuggestionsSchema } from './types'
+import { activityWindow, fillDailySeries, type ActivityPoint } from './activity'
+import { auditActivitySchema, auditLogsPageSchema, userSuggestionsSchema } from './types'
 
 export const AUDIT_LOGS_PAGE_SIZE = 20
 
@@ -39,6 +40,7 @@ export const auditLogsKeys = {
   list: (filters: AuditLogsFilters, page: number) => ['admin-audit-logs', 'list', filters, page] as const,
   count: (action: string | null, hours: number) => ['admin-audit-logs', 'count', action, hours] as const,
   users: (term: string) => ['admin-audit-logs', 'users', term] as const,
+  activity: (days: number) => ['admin-audit-logs', 'activity', days] as const,
 }
 
 // Las tarjetas de resumen no cambian entre un vistazo y el siguiente; el botón "Refrescar" las fuerza.
@@ -145,6 +147,35 @@ export function useUserSuggestions(term: string, enabled: boolean) {
       return userSuggestionsSchema.parse(unwrap(response.data)).users
     },
     staleTime: 30_000,
+    placeholderData: keepPreviousData,
+  })
+}
+
+/**
+ * PENDIENTE (CLAUDE.md §5.4, §6.24): `GET /admin/audit-logs/activity` NO existe en el backend todavía. Con `false`
+ * no se pinta la tarjeta de actividad por día ni se hace ninguna petición. Para activarlo: releer el backend, documentar
+ * el contrato real en §5.4, ajustar `auditActivitySchema` (types.ts) y actualizar `api.test.tsx`, que fija el `false` a
+ * propósito para que activarlo sea una decisión consciente. Mismo patrón que `FILE_MOVE_ENABLED` y `THUMBNAILS_ENABLED`.
+ */
+export const AUDIT_ACTIVITY_ENABLED = false
+
+/**
+ * Actividad por día de las últimas `rangeDays` jornadas UTC, ya rellena (los días sin actividad, a 0). La ventana
+ * se calcula al ejecutar la consulta —no en la clave— y es la misma con la que se rellena la serie, así que
+ * petición y gráfico no pueden divergir. `enabled` es un parámetro solo para poder probar la ruta activa.
+ */
+export function useAuditActivity(rangeDays: number, enabled: boolean = AUDIT_ACTIVITY_ENABLED) {
+  return useQuery({
+    queryKey: auditLogsKeys.activity(rangeDays),
+    enabled,
+    queryFn: async (): Promise<ActivityPoint[]> => {
+      const window = activityWindow(rangeDays)
+      const response = await api.get<ApiObjResponse<unknown>>('/admin/audit-logs/activity', {
+        params: { from: toUtcDayStart(window.from), to: toUtcDayEnd(window.to) },
+      })
+      return fillDailySeries(auditActivitySchema.parse(unwrap(response.data)).daily, window)
+    },
+    staleTime: SUMMARY_STALE_TIME_MS,
     placeholderData: keepPreviousData,
   })
 }

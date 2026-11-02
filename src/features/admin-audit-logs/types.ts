@@ -76,3 +76,13 @@ export const userSuggestionsSchema = z.object({
   users: z.array(userSummarySchema.pick({ id: true, username: true })),
 })
 export type UserSuggestion = z.infer<typeof userSuggestionsSchema>['users'][number]
+
+// PROPUESTA de contrato, SIN VERIFICAR — el endpoint no existe (CLAUDE.md §5.4, §6.24):
+// GET /admin/audit-logs/activity?from=&to=  ->  { daily: [{ date: "2026-11-01", count: 12 }], ... }
+// `date` es un día UTC; los días sin actividad pueden venir omitidos (el front los rellena con 0). El
+// contrato completo propuesto trae además `topUsers` y `topActions`; aquí solo se valida lo que el front
+// consume (Zod descarta el resto).
+export const auditActivitySchema = z.object({
+  daily: z.array(z.object({ date: z.string(), count: z.number() })),
+})
+export type AuditActivity = z.infer<typeof auditActivitySchema>

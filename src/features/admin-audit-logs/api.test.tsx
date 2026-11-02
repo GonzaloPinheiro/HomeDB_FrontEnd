@@ -9,7 +9,9 @@ import type { ApiObjResponse } from '@/shared/types/api'
 import {
   auditLogsKeys,
   EMPTY_AUDIT_FILTERS,
+  AUDIT_ACTIVITY_ENABLED,
   SUMMARY_WINDOW_HOURS,
+  useAuditActivity,
   useAuditLogs,
   useAuditSummary,
   useUserSuggestions,
@@ -188,5 +190,53 @@ describe('useUserSuggestions', () => {
     renderHook(() => useUserSuggestions('   ', true), { wrapper })
 
     expect(get).not.toHaveBeenCalled()
+  })
+})
+
+describe('useAuditActivity (bloque B, sin endpoint en el back)', () => {
+  // Recordatorio deliberado: el endpoint aún no existe (CLAUDE.md §5.4, §6.24). Quien lo active tiene que haber
+  // verificado el contrato real y actualizar esta prueba a propósito.
+  it('el interruptor está desactivado hasta que exista el endpoint', () => {
+    expect(AUDIT_ACTIVITY_ENABLED).toBe(false)
+  })
+
+  it('desactivado no hace ninguna petición', () => {
+    const get = vi.spyOn(api, 'get')
+    const { wrapper } = createWrapper()
+
+    renderHook(() => useAuditActivity(7), { wrapper })
+
+    expect(get).not.toHaveBeenCalled()
+  })
+
+  it('activado pide la ventana en días UTC con Z y devuelve la serie rellena', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-11-02T18:30:00Z'))
+    const get = vi.spyOn(api, 'get').mockResolvedValue({
+      data: envelope({ daily: [{ date: '2026-11-01', count: 4 }], topUsers: [], topActions: [] }),
+    })
+    const { wrapper } = createWrapper()
+
+    const { result } = renderHook(() => useAuditActivity(3, true), { wrapper })
+    await waitFor(() => expect(result.current.isSuccess).toBe(true))
+    vi.useRealTimers()
+
+    expect(get).toHaveBeenCalledWith('/admin/audit-logs/activity', {
+      params: { from: '2026-10-31T00:00:00Z', to: '2026-11-02T23:59:59Z' },
+    })
+    expect(result.current.data).toEqual([
+      { date: '2026-10-31', count: 0 },
+      { date: '2026-11-01', count: 4 },
+      { date: '2026-11-02', count: 0 },
+    ])
+  })
+
+  it('una respuesta con otra forma falla en Zod en vez de pintar datos rotos', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({ data: envelope({ days: [] }) })
+    const { wrapper } = createWrapper()
+
+    const { result } = renderHook(() => useAuditActivity(7, true), { wrapper })
+
+    await waitFor(() => expect(result.current.isError).toBe(true))
   })
 })
