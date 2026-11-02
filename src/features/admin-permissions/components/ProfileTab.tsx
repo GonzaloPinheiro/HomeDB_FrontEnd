@@ -1,4 +1,10 @@
+import { ClipboardList } from 'lucide-react'
+import { Link } from 'react-router-dom'
+
+import { auditLogsPathForUser } from '@/features/admin-audit-logs/links'
 import { RoleBadge } from '@/shared/components/RoleBadge'
+import { Button } from '@/shared/components/ui/button'
+import { usePermissions } from '@/shared/hooks/usePermissions'
 import { formatShortDate } from '@/shared/lib/formatDate'
 import type { UserSummary } from '@/shared/types/user'
 
@@ -14,6 +20,9 @@ type ProfileTabProps = {
  * query aparte solo para repintar lo mismo.
  */
 export function ProfileTab({ user }: ProfileTabProps) {
+  // El enlace lleva a una pantalla que exige el módulo AuditLogs (§5.3): sin él, no se ofrece (§6.24)
+  const { hasModule } = usePermissions()
+
   return (
     <div className="flex flex-col gap-5">
       <div>
@@ -36,6 +45,15 @@ export function ProfileTab({ user }: ProfileTabProps) {
         <p className="text-xs font-medium uppercase tracking-wide text-text-muted">Creado</p>
         <p className="mt-1 text-sm text-text-primary">{formatShortDate(user.createdAt)}</p>
       </div>
+      {hasModule('AuditLogs') && (
+        <Button asChild variant="outline" size="sm" className="self-start">
+          {/* Navegar desmonta esta página y con ella el modal: no hay nada que cerrar a mano */}
+          <Link to={auditLogsPathForUser(user.id)}>
+            <ClipboardList aria-hidden />
+            Ver actividad en Auditoría
+          </Link>
+        </Button>
+      )}
       <p className="mt-2 border-t border-border-light pt-4 text-xs text-text-muted">
         Este perfil no se puede editar desde aquí: HomeDB solo permite que cada usuario cambie su
         propio nombre y email (Ajustes → Perfil). No existe un endpoint para que un administrador

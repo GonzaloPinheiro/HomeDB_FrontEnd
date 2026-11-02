@@ -1,6 +1,36 @@
 import { describe, expect, it } from 'vitest'
 
-import { formatDuration } from './formatDuration'
+import { formatDuration, formatMillis } from './formatDuration'
+
+describe('formatMillis', () => {
+  it('por debajo del segundo -> milisegundos', () => {
+    expect(formatMillis(0)).toBe('0 ms')
+    expect(formatMillis(850)).toBe('850 ms')
+    expect(formatMillis(999)).toBe('999 ms')
+  })
+
+  it('un valor que redondea a 1000 ms ya es un segundo, no "1000 ms"', () => {
+    expect(formatMillis(999.6)).toBe('1 s')
+  })
+
+  it('segundos con un decimal y coma, sin ",0" sobrante', () => {
+    expect(formatMillis(1000)).toBe('1 s')
+    expect(formatMillis(1500)).toBe('1,5 s')
+    expect(formatMillis(2349)).toBe('2,3 s')
+    expect(formatMillis(2000)).toBe('2 s')
+    expect(formatMillis(59_949)).toBe('59,9 s')
+  })
+
+  it('desde un minuto (o al redondear a él) delega en formatDuration', () => {
+    expect(formatMillis(59_960)).toBe('1 min 0 s')
+    expect(formatMillis(134_000)).toBe('2 min 14 s')
+  })
+
+  it('valores inválidos -> guion', () => {
+    expect(formatMillis(-1)).toBe('—')
+    expect(formatMillis(Number.NaN)).toBe('—')
+  })
+})
 
 describe('formatDuration', () => {
   it('menos de un minuto -> segundos', () => {

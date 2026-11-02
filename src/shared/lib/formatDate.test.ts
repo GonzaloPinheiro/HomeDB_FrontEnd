@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { formatDateTime, formatLongDate, formatShortDate, formatShortDateTime, formatTime } from './formatDate'
+import { formatDateTime, formatLongDate, formatShortDate, formatShortDateTime, formatTime, formatUtcDay } from './formatDate'
 
 // `now` fijo para que los tests no dependan del año en que se ejecutan
 const NOW = new Date('2026-07-21T12:00:00Z')
@@ -58,5 +58,22 @@ describe('formatTime', () => {
 
   it('string inválido', () => {
     expect(formatTime('no-es-una-fecha')).toBe('—')
+  })
+})
+
+describe('formatUtcDay', () => {
+  it('día UTC legible, con año', () => {
+    expect(formatUtcDay('2026-11-01')).toBe('1 nov 2026')
+    expect(formatUtcDay('2026-01-31')).toBe('31 ene 2026')
+  })
+
+  it('no se desplaza al día anterior por la zona horaria (se formatea en UTC)', () => {
+    // 00:00 UTC del 1 de noviembre sigue siendo "1 nov" aunque en América sea todavía 31 de octubre
+    expect(formatUtcDay('2026-11-01')).toContain('1 nov')
+  })
+
+  it('fecha inválida -> guion', () => {
+    expect(formatUtcDay('no-es-una-fecha')).toBe('—')
+    expect(formatUtcDay('')).toBe('—')
   })
 })

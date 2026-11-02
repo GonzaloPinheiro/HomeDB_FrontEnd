@@ -4,7 +4,7 @@ import { api, unwrap } from '@/shared/api/client'
 import { toUtcDayEnd, toUtcDayStart } from '@/shared/lib/dateRangeQuery'
 import type { ApiObjResponse } from '@/shared/types/api'
 
-import { logHealthSchema, logsPageSchema } from './types'
+import { errorSummarySchema, logHealthSchema, logsPageSchema, slowOperationsSchema } from './types'
 
 export const LOGS_PAGE_SIZE = 20
 
@@ -30,7 +30,14 @@ export const logsKeys = {
   all: ['admin-logs'] as const,
   list: (filters: LogsFilters, page: number) => ['admin-logs', 'list', filters, page] as const,
   health: ['admin-logs', 'health'] as const,
+  errorSummary: (hours: number) => ['admin-logs', 'error-summary', hours] as const,
+  slowOperations: (thresholdMs: number) => ['admin-logs', 'slow-operations', thresholdMs] as const,
 }
+
+// Los dos análisis recorren la tabla de logs entera —sin índices sobre `Logs` ni política de retención en
+// el backend (§5.4)—, así que no se repiten al volver a la pantalla ni al cambiar de chip y volver. El
+// botón "Refrescar" los fuerza (invalida `logsKeys.all`).
+const INSIGHT_STALE_TIME_MS = 60_000
 
 export function useLogs(filters: LogsFilters, page: number) {
   return useQuery({
@@ -56,13 +63,11 @@ export function useLogs(filters: LogsFilters, page: number) {
 }
 
 /**
- * GET /admin/logs/health — resumen de la cabecera (§6.6: 3 cifras simples).
- * CLAUDE.md §5.4 lo documenta como 3 contadores funcionales; verificado en la
- * auditoría de Fase 5 que `ErrorsLastHour`/`ErrorsLast24h` cuentan Level ==
- * "Error" en el backend, un valor que ningún código del backend escribe hoy
- * (solo escribe "Information"/"Warning"/"Critical") — esos dos contadores
- * siempre devuelven 0 en la práctica. Es un bug del backend, no de este front;
- * se muestra tal cual devuelve la API (ver informe de Fase 5).
+ * GET /admin/logs/health — resumen de la cabecera (§6.23: 3 tarjetas). `errorsLastHour`/`errorsLast24h`
+ * cuentan entradas de nivel `Error` (NO `Critical`, que va aparte en `useErrorSummary`) y
+ * `warningsLast24h` las de nivel `Warning`. En la auditoría de Fase 5 los dos primeros valían siempre 0
+ * porque ningún código escribía `Error`; releído en noviembre 2026, el backend ya lo escribe (§5.4) y
+ * los contadores funcionan.
  */
 export function useLogsHealth() {
   return useQuery({
@@ -71,5 +76,44 @@ export function useLogsHealth() {
       const response = await api.get<ApiObjResponse<unknown>>('/admin/logs/health')
       return logHealthSchema.parse(unwrap(response.data))
     },
+  })
+}
+
+/**
+ * GET /admin/logs/error-summary?hours= — top 10 de operaciones con excepciones no controladas
+ * (nivel `Critical`) en las últimas `hours` horas. `hours` debe salir de `ERROR_SUMMARY_RANGES`
+ * (presentation.ts): el backend no lo valida.
+ */
+export function useErrorSummary(hours: number) {
+  return useQuery({
+    queryKey: logsKeys.errorSummary(hours),
+    queryFn: async () => {
+      const response = await api.get<ApiObjResponse<unknown>>('/admin/logs/error-summary', {
+        params: { hours },
+      })
+      return errorSummarySchema.parse(unwrap(response.data))
+    },
+    staleTime: INSIGHT_STALE_TIME_MS,
+    // Al cambiar de rango se queda el anterior (atenuado) en vez de saltar a un skeleton
+    placeholderData: keepPreviousData,
+  })
+}
+
+/**
+ * GET /admin/logs/slow-operations?thresholdMs= — las 50 ejecuciones más lentas por encima del umbral,
+ * ordenadas de más a menos lenta. **Sin ventana temporal**: abarca toda la tabla de logs (§5.4).
+ * `thresholdMs` debe salir de `SLOW_THRESHOLDS` (presentation.ts).
+ */
+export function useSlowOperations(thresholdMs: number) {
+  return useQuery({
+    queryKey: logsKeys.slowOperations(thresholdMs),
+    queryFn: async () => {
+      const response = await api.get<ApiObjResponse<unknown>>('/admin/logs/slow-operations', {
+        params: { thresholdMs },
+      })
+      return slowOperationsSchema.parse(unwrap(response.data))
+    },
+    staleTime: INSIGHT_STALE_TIME_MS,
+    placeholderData: keepPreviousData,
   })
 }

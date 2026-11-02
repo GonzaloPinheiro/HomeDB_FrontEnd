@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+import { userSummarySchema } from '@/shared/types/user'
+
 // Forma real verificada contra HomeDB.Domain.Entities.AuditLogEntry.cs (julio
 // 2026) — GetAuditLogsResponseDto.Items devuelve la entidad de dominio
 // DIRECTAMENTE, sin DTO propio (confirmado, CLAUDE.md §5.4 ya lo advertía).
@@ -50,6 +52,7 @@ export const AUDIT_ACTIONS = [
   'DELETE_USER',
   'UPDATE_PROFILE',
 ] as const
+export type AuditAction = (typeof AUDIT_ACTIONS)[number]
 
 /**
  * `ResourceType` NO es un enum ni una lista cerrada en el backend — es un
@@ -65,3 +68,21 @@ export const AUDIT_ACTIONS = [
  * lista queda desactualizada hasta tocarla a mano (ver informe de Fase 5).
  */
 export const AUDIT_RESOURCE_TYPES = ['FileItem', 'FolderItem', 'User'] as const
+
+// GET /admin/users (para sugerir usuarios en el filtro, §6.24): solo se leen id y nombre. El DTO real
+// (UserSummaryDto, `shared/types/user`) trae más campos; `pick` evita que un cambio en los que aquí no se
+// usan rompa el filtro.
+export const userSuggestionsSchema = z.object({
+  users: z.array(userSummarySchema.pick({ id: true, username: true })),
+})
+export type UserSuggestion = z.infer<typeof userSuggestionsSchema>['users'][number]
+
+// PROPUESTA de contrato, SIN VERIFICAR — el endpoint no existe (CLAUDE.md §5.4, §6.24):
+// GET /admin/audit-logs/activity?from=&to=  ->  { daily: [{ date: "2026-11-01", count: 12 }], ... }
+// `date` es un día UTC; los días sin actividad pueden venir omitidos (el front los rellena con 0). El
+// contrato completo propuesto trae además `topUsers` y `topActions`; aquí solo se valida lo que el front
+// consume (Zod descarta el resto).
+export const auditActivitySchema = z.object({
+  daily: z.array(z.object({ date: z.string(), count: z.number() })),
+})
+export type AuditActivity = z.infer<typeof auditActivitySchema>
