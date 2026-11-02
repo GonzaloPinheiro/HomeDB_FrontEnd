@@ -90,3 +90,16 @@ export function formatTime(iso: string): string {
   if (Number.isNaN(date.getTime())) return '—'
   return TIME.format(date)
 }
+
+const UTC_DAY = new Intl.DateTimeFormat('es-ES', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })
+
+/**
+ * Día UTC "AAAA-MM-DD" (el valor de un `<input type="date">`, que los filtros del backend interpretan en UTC,
+ * §5.4) -> "1 nov 2026". Se formatea EN UTC: en la zona local un día tan "pelado" podría salir como el
+ * anterior. Fecha inválida -> "—".
+ */
+export function formatUtcDay(day: string): string {
+  const date = new Date(`${day}T00:00:00Z`)
+  if (Number.isNaN(date.getTime())) return '—'
+  return UTC_DAY.format(date).replace(/\./g, '')
+}

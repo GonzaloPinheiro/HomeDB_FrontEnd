@@ -9,6 +9,14 @@ export function readParam(params: URLSearchParams, key: string): string | null {
   return value === null || value === '' ? null : value
 }
 
+/** Entero positivo de la URL (p. ej. un `userId`); cualquier otra cosa (texto, 0, negativos, decimales) es `null`. */
+export function readIntParam(params: URLSearchParams, key: string): number | null {
+  const raw = readParam(params, key)
+  if (raw === null) return null
+  const parsed = Number(raw)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null
+}
+
 /** Página de la URL: entero >= 1; cualquier otra cosa (texto, 0, negativos, decimales) se corrige. */
 export function parsePageParam(params: URLSearchParams): number {
   const parsed = Number(params.get(PAGE_KEY))

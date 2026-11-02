@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { parsePageParam, patchParams, readParam, replaceParams, serializeParam } from './searchParams'
+import { parsePageParam, patchParams, readIntParam, readParam, replaceParams, serializeParam } from './searchParams'
 
 const params = (query: string) => new URLSearchParams(query)
 
@@ -9,6 +9,20 @@ describe('readParam', () => {
     expect(readParam(params('level=Error'), 'level')).toBe('Error')
     expect(readParam(params('level='), 'level')).toBeNull()
     expect(readParam(params(''), 'level')).toBeNull()
+  })
+})
+
+describe('readIntParam', () => {
+  it('lee un entero positivo', () => {
+    expect(readIntParam(params('userId=5'), 'userId')).toBe(5)
+  })
+
+  it.each(['0', '-2', 'abc', '2.5', '', '1e3x'])('el valor %j no es un id válido -> null', (value) => {
+    expect(readIntParam(params(`userId=${value}`), 'userId')).toBeNull()
+  })
+
+  it('ausente -> null', () => {
+    expect(readIntParam(params(''), 'userId')).toBeNull()
   })
 })
 
