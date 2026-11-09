@@ -21,12 +21,14 @@ import {
   type ScanResult,
   type TreeFile,
 } from './directoryTree'
+import { UNCERTAIN_OUTCOME_MESSAGE, isOutcomeUncertain, uploadKindOf } from './directUpload'
 import { summarizeEntries } from './entryList'
 import { FolderResolver } from './folderResolver'
 import { InvalidationBatcher } from './invalidationBatcher'
 import {
   CHUNK_SIZE_BYTES,
-  MAX_CONCURRENT_UPLOADS,
+  MAX_CONCURRENT_CHUNKED_UPLOADS,
+  MAX_CONCURRENT_DIRECT_UPLOADS,
   MAX_PARALLEL_CHUNK_UPLOADS,
   aggregateProgress,
   completeUploadSession,
@@ -35,8 +37,10 @@ import {
   initUploadSession,
   loadedBytesTotal,
   uploadChunkWithRetry,
+  uploadFileDirect,
 } from './pipeline'
 import { RateLimitGate, withRateLimitRetry } from './rateLimit'
+import { pickEntriesToStart } from './scheduler'
 import { SpeedTracker } from './speed'
 import {
   describeSkippedFiles,
@@ -205,6 +209,8 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
       const controller = new AbortController()
       controllersRef.current.set(entry.id, controller)
       const plan = computeChunkPlan(entry.file.size)
+      // Directa (una petición) o por sesión (chunks): depende solo del tamaño (directUpload.ts).
+      const kind = uploadKindOf(entry.file.size)
       // Toda petición HTTP del pipeline pasa por aquí: respeta la pausa global y
       // ante un 429 la activa y reintenta sin dar el archivo por fallido. Recibe
       // el signal porque las peticiones de chunk usan el del pool (se aborta si
@@ -308,9 +314,9 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
         return resolved
       }
 
-      try {
-        const destinationFolderId = await resolveDestination()
-
+      // Subida por sesión, para los archivos de más de un chunk (§7.4): init → chunks →
+      // complete → espera del ensamblado en background.
+      const uploadInChunks = async (destinationFolderId: number | null): Promise<void> => {
         // Reintento (§7.4): si la entrada ya tenía sesión, el servidor dice en qué
         // punto quedó (faltan chunks / ya ensamblando / ya terminada) en vez de
         // repetir nada a ciegas. `const` para que las closures conserven el tipo `string`.
@@ -367,6 +373,62 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
             waitingEntries: () => processingBytesRef.current.size,
           })
         }
+      }
+
+      // Subida directa, para los archivos que caben en un chunk (§7.4, directUpload.ts):
+      // UNA petición, sin sesión, y la respuesta ya trae el archivo creado, así que no
+      // hay estado `processing` ni consultas. NO se reintenta sola (no es idempotente):
+      // solo la repite `limited` ante un 429, que el backend rechaza antes de crear nada.
+      const uploadDirectly = async (destinationFolderId: number | null): Promise<void> => {
+        const size = entry.file.size
+        let sentBytes = 0 // de la única petición; 0 si arranca de cero tras una pausa por 429
+        let lastProgress = -1
+        const speedTracker = new SpeedTracker()
+        const reportProgress = () => {
+          speedTracker.record(Date.now(), loadedBytesTotal([size], [sentBytes]))
+          // Tope 99: con el cuerpo ya enviado el servidor aún guarda y valida el archivo;
+          // el 100 % llega con su respuesta, no antes.
+          const progress = Math.min(99, aggregateProgress([size], [sentBytes], size))
+          if (progress === lastProgress) return
+          lastProgress = progress
+          patchEntry(entry.id, { progress })
+        }
+        // Igual que en sendMissingChunks: por reloj, para que la velocidad caiga si se atasca.
+        const speedTimer = setInterval(() => {
+          patchEntry(entry.id, {
+            uploadedBytes: loadedBytesTotal([size], [sentBytes]),
+            speedBytesPerSec: speedTracker.bytesPerSecond(Date.now()),
+          })
+        }, 1000)
+
+        try {
+          // Ocupa un hueco del semáforo global como un chunk, para que
+          // MAX_PARALLEL_CHUNK_UPLOADS siga siendo el único mando de cuántas peticiones de
+          // carga viajan a la vez. Es el mismo pool con una sola tarea: reutiliza su
+          // cancelación y su orden de turnos en vez de reimplementarlos.
+          await runWithConcurrency(
+            [entry.file],
+            { concurrency: 1, semaphore: chunkSlots, signal: controller.signal },
+            async (file, requestSignal) => {
+              await limited(() => {
+                sentBytes = 0
+                return uploadFileDirect({ file, folderId: destinationFolderId }, requestSignal, (loaded) => {
+                  sentBytes = loaded
+                  reportProgress()
+                })
+              }, requestSignal)
+            },
+          )
+        } finally {
+          clearInterval(speedTimer)
+        }
+      }
+
+      try {
+        const destinationFolderId = await resolveDestination()
+
+        if (kind === 'direct') await uploadDirectly(destinationFolderId)
+        else await uploadInChunks(destinationFolderId)
 
         patchEntry(entry.id, { status: 'done', progress: 100, uploadedBytes: entry.file.size, speedBytesPerSec: null })
         invalidationBatcher.markChanged(destinationFolderId, { storageUsage: true })
@@ -380,6 +442,17 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
             status: 'error',
             speedBytesPerSec: null,
             error: error.message,
+            errorCode: undefined,
+          })
+        } else if (kind === 'direct' && isOutcomeUncertain(toApiError(error))) {
+          // Subida directa sin respuesta fiable (red, stall, 5xx): el archivo PUDO crearse,
+          // y repetirla a ciegas lo duplicaría (directUpload.ts). Por eso `errorCode` es
+          // `undefined` y no `null`: el reintento automático al volver la conexión solo
+          // recoge los `null`. El usuario decide con el botón "Reintentar", ya avisado.
+          patchEntry(entry.id, {
+            status: 'error',
+            speedBytesPerSec: null,
+            error: UNCERTAIN_OUTCOME_MESSAGE,
             errorCode: undefined,
           })
         } else {
@@ -437,15 +510,15 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
     return () => clearTimeout(timer)
   }, [rateLimitedUntil])
 
-  // Promueve entradas en cola a "uploading" respetando MAX_CONCURRENT_UPLOADS
-  // (CLAUDE.md §7.4) — se dispara solo, cada vez que cambia la cola: al
-  // añadir archivos, al cancelar, o al terminar una subida y liberar hueco.
+  // Promueve entradas en cola a "uploading" (CLAUDE.md §7.4, scheduler.ts) — se dispara
+  // solo, cada vez que cambia la cola: al añadir archivos, al cancelar, o al terminar una
+  // subida y liberar hueco. Hay un tope por tipo de subida (grandes por sesión / pequeñas
+  // directas), no uno global.
   useEffect(() => {
-    const uploadingCount = entries.filter((e) => e.status === 'uploading').length
-    const capacity = MAX_CONCURRENT_UPLOADS - uploadingCount
-    if (capacity <= 0) return
-
-    const toStart = entries.filter((e) => e.status === 'queued' && !startedRef.current.has(e.id)).slice(0, capacity)
+    const toStart = pickEntriesToStart(entries, startedRef.current, {
+      chunked: MAX_CONCURRENT_CHUNKED_UPLOADS,
+      direct: MAX_CONCURRENT_DIRECT_UPLOADS,
+    })
     for (const entry of toStart) {
       startedRef.current.add(entry.id)
       patchEntry(entry.id, { status: 'uploading', progress: 0 })
@@ -619,7 +692,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
     for (const id of failedIds) startedRef.current.delete(id)
     // Mismas reglas que retryEntry (conserva sessionId para reanudar con GET /status),
     // en una sola actualización de estado en vez de N. El planificador de arriba
-    // las va promoviendo a 'uploading' de MAX_CONCURRENT_UPLOADS en MAX_CONCURRENT_UPLOADS.
+    // las va promoviendo a 'uploading' (scheduler.ts) respetando el tope de cada tipo de subida.
     setEntries((current) =>
       current.map((entry) =>
         failedIds.has(entry.id) ? { ...entry, status: 'queued', error: undefined, errorCode: undefined } : entry,

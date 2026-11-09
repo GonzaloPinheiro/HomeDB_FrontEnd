@@ -1,12 +1,19 @@
-import { describe, expect, it } from 'vitest'
+import type { AxiosRequestConfig } from 'axios'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import { ApiError, api } from '@/shared/api/client'
+import { ApiErrorCodes } from '@/shared/api/errors'
 
 import {
   BACKEND_CHUNK_REQUEST_LIMIT_BYTES,
   CHUNK_SIZE_BYTES,
   MAX_PARALLEL_CHUNK_UPLOADS,
+  STALL_TIMEOUT_MS,
   aggregateProgress,
   backoffDelayMs,
   computeChunkPlan,
+  uploadChunkWithRetry,
+  uploadFileDirect,
 } from './pipeline'
 
 describe('constantes de la subida por chunks', () => {
@@ -93,5 +100,193 @@ describe('aggregateProgress', () => {
 
   it('0% si el tamaño total es inválido, sin dividir por cero', () => {
     expect(aggregateProgress(chunkSizes, [0, 0, 0], 0)).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------------------
+// Transporte: lo que se manda por la red. Los chunks y la subida directa comparten el POST
+// multipart con el control de conexión colgada (postFormWithStallGuard); estas pruebas
+// fijan el contrato de cada uno con `api.post` simulado, sin servidor.
+// ---------------------------------------------------------------------------------------
+
+const CREATED_FILE = {
+  id: 9,
+  fileName: 'a.txt',
+  sizeBytes: 3,
+  contentType: 'text/plain',
+  folderId: null,
+  ownerId: 1,
+  uploadedAt: '2026-11-09T10:00:00Z',
+}
+const envelope = (data: unknown) => ({ data: { result: true, data, errorCode: null, errorMessage: null } })
+
+type PostArgs = [url: string, body: FormData, config: AxiosRequestConfig]
+const lastPost = (spy: { mock: { calls: unknown[][] } }): PostArgs => spy.mock.calls.at(-1) as unknown as PostArgs
+
+/** Una petición que nunca responde, pero que se corta con el signal como lo haría axios. */
+function hangUntilAborted(config: AxiosRequestConfig) {
+  return new Promise((_resolve, reject) => {
+    config.signal?.addEventListener?.('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })
+  })
+}
+
+describe('uploadFileDirect — POST /files', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.useRealTimers()
+  })
+
+  it('manda el archivo en el campo `file` y la carpeta en `folderId`', async () => {
+    const spy = vi.spyOn(api, 'post').mockResolvedValue(envelope(CREATED_FILE))
+    const file = new File(['abc'], 'a.txt')
+
+    await uploadFileDirect({ file, folderId: 42 }, new AbortController().signal, () => {})
+
+    const [url, body, config] = lastPost(spy)
+    expect(url).toBe('/files')
+    expect((body.get('file') as File).name).toBe('a.txt')
+    expect(body.get('folderId')).toBe('42')
+    expect(config.timeout).toBe(0) // sin techo de duración total: lo controla el stall
+  })
+
+  it('en la raíz NO manda `folderId` (nunca el texto "null")', async () => {
+    const spy = vi.spyOn(api, 'post').mockResolvedValue(envelope(CREATED_FILE))
+
+    await uploadFileDirect({ file: new File(['abc'], 'a.txt'), folderId: null }, new AbortController().signal, () => {})
+
+    expect(lastPost(spy)[1].has('folderId')).toBe(false)
+  })
+
+  it('devuelve el archivo creado, ya validado', async () => {
+    vi.spyOn(api, 'post').mockResolvedValue(envelope(CREATED_FILE))
+    const created = await uploadFileDirect(
+      { file: new File(['abc'], 'a.txt'), folderId: null },
+      new AbortController().signal,
+      () => {},
+    )
+    expect(created).toEqual(CREATED_FILE)
+  })
+
+  it('una respuesta con otra forma falla (no se da por buena)', async () => {
+    vi.spyOn(api, 'post').mockResolvedValue(envelope({ id: 'no es un número' }))
+    await expect(
+      uploadFileDirect({ file: new File(['abc'], 'a.txt'), folderId: null }, new AbortController().signal, () => {}),
+    ).rejects.toThrow()
+  })
+
+  it('un `result: false` lanza el error del servidor con su código', async () => {
+    vi.spyOn(api, 'post').mockResolvedValue({
+      data: { result: false, data: null, errorCode: ApiErrorCodes.InvalidFileExtension, errorMessage: 'x' },
+    })
+    await expect(
+      uploadFileDirect({ file: new File(['abc'], 'a.txt'), folderId: null }, new AbortController().signal, () => {}),
+    ).rejects.toMatchObject({ errorCode: ApiErrorCodes.InvalidFileExtension })
+  })
+
+  it('NO se reintenta sola: no es idempotente, repetirla duplicaría el archivo', async () => {
+    const spy = vi.spyOn(api, 'post').mockRejectedValue(new ApiError(null, 'sin conexión'))
+    await expect(
+      uploadFileDirect({ file: new File(['abc'], 'a.txt'), folderId: null }, new AbortController().signal, () => {}),
+    ).rejects.toBeInstanceOf(ApiError)
+    expect(spy).toHaveBeenCalledTimes(1)
+  })
+
+  it('transmite el progreso de envío', async () => {
+    vi.spyOn(api, 'post').mockImplementation(async (_url, _body, config) => {
+      config?.onUploadProgress?.({ loaded: 1234 } as never)
+      return envelope(CREATED_FILE)
+    })
+    const onProgress = vi.fn()
+    await uploadFileDirect({ file: new File(['abc'], 'a.txt'), folderId: null }, new AbortController().signal, onProgress)
+    expect(onProgress).toHaveBeenCalledWith(1234)
+  })
+
+  describe('conexión colgada (stall)', () => {
+    it(`se aborta tras ${STALL_TIMEOUT_MS / 1000} s sin progreso`, async () => {
+      vi.useFakeTimers()
+      vi.spyOn(api, 'post').mockImplementation((_url, _body, config) => hangUntilAborted(config ?? {}))
+      const result = uploadFileDirect(
+        { file: new File(['abc'], 'a.txt'), folderId: null },
+        new AbortController().signal,
+        () => {},
+      )
+      const settled = expect(result).rejects.toBeDefined()
+
+      await vi.advanceTimersByTimeAsync(STALL_TIMEOUT_MS - 1)
+      await vi.advanceTimersByTimeAsync(1)
+      await settled
+    })
+
+    it('mientras llega progreso NO se aborta, aunque tarde mucho más que el timeout', async () => {
+      vi.useFakeTimers()
+      let config: AxiosRequestConfig = {}
+      vi.spyOn(api, 'post').mockImplementation((_url, _body, requestConfig) => {
+        config = requestConfig ?? {}
+        return hangUntilAborted(config)
+      })
+      const result = uploadFileDirect(
+        { file: new File(['abc'], 'a.txt'), folderId: null },
+        new AbortController().signal,
+        () => {},
+      )
+      result.catch(() => {})
+
+      // 5 × 15 s = 75 s en total, pero con progreso cada 15 s: nunca hay 20 s seguidos sin avanzar
+      for (let i = 0; i < 5; i++) {
+        await vi.advanceTimersByTimeAsync(15_000)
+        config.onUploadProgress?.({ loaded: i + 1 } as never)
+      }
+      expect(config.signal?.aborted).toBe(false)
+    })
+
+    it('cancelar desde fuera corta la petición', async () => {
+      const outer = new AbortController()
+      let config: AxiosRequestConfig = {}
+      vi.spyOn(api, 'post').mockImplementation((_url, _body, requestConfig) => {
+        config = requestConfig ?? {}
+        return hangUntilAborted(config)
+      })
+      const result = uploadFileDirect({ file: new File(['abc'], 'a.txt'), folderId: null }, outer.signal, () => {})
+      const settled = expect(result).rejects.toBeDefined()
+
+      outer.abort()
+      await settled
+      expect(config.signal?.aborted).toBe(true)
+    })
+  })
+})
+
+describe('uploadChunkWithRetry — POST /files/upload/chunk (sin cambios tras compartir el transporte)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.useRealTimers()
+  })
+
+  it('manda sessionId, chunkNumber y el chunk en un multipart, sin timeout total', async () => {
+    const spy = vi.spyOn(api, 'post').mockResolvedValue(envelope('ok'))
+    const blob = new Blob(['datos'])
+
+    await uploadChunkWithRetry('sesion-1', 3, blob, new AbortController().signal, () => {})
+
+    const [url, body, config] = lastPost(spy)
+    expect(url).toBe('/files/upload/chunk')
+    expect(body.get('sessionId')).toBe('sesion-1')
+    expect(body.get('chunkNumber')).toBe('3')
+    expect((body.get('chunk') as Blob).size).toBe(blob.size)
+    expect(config.timeout).toBe(0)
+  })
+
+  it('SÍ reintenta un fallo transitorio (un chunk es idempotente), con backoff', async () => {
+    vi.useFakeTimers()
+    const spy = vi
+      .spyOn(api, 'post')
+      .mockRejectedValueOnce(new ApiError(null, 'corte'))
+      .mockResolvedValue(envelope('ok'))
+
+    const result = uploadChunkWithRetry('s', 1, new Blob(['x']), new AbortController().signal, () => {})
+    await vi.advanceTimersByTimeAsync(backoffDelayMs(1))
+    await result
+
+    expect(spy).toHaveBeenCalledTimes(2)
   })
 })

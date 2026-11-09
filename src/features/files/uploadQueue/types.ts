@@ -48,7 +48,9 @@ export type UploadQueueEntry = {
    * conexión) de un rechazo real del servidor (FileTooLarge, etc. — reintentar
    * solo no lo arregla, hace falta acción del usuario). `undefined` = tampoco hay
    * código de la API, pero el fallo no es de red (se agotó el plazo de espera del
-   * procesado, ProcessingTimeoutError): tampoco se reintenta solo.
+   * procesado, ProcessingTimeoutError; o una subida DIRECTA sin respuesta fiable, que
+   * pudo crear el archivo y repetirla lo duplicaría, directUpload.ts): tampoco se
+   * reintenta solo.
    */
   errorCode?: number | null
 }

@@ -3,8 +3,10 @@ import type { ApiObjResponse } from '@/shared/types/api'
 
 import {
   uploadCompleteResponseSchema,
+  uploadFileResponseSchema,
   uploadInitResponseSchema,
   uploadStatusResponseSchema,
+  type UploadFileResponse,
   type UploadStatusResponse,
 } from '../types'
 
@@ -33,15 +35,24 @@ export const CHUNK_SIZE_BYTES = 32 * 1024 * 1024
 // usuario; si el enlace ya va al máximo con un chunk, subirlo no acelera nada.
 export const MAX_PARALLEL_CHUNK_UPLOADS = 4
 
-// Nº máximo de archivos subiendo a la vez (cada uno con su sesión). Es
-// independiente del paralelismo de chunks de arriba: el tope de chunks en vuelo
-// es global, así que más archivos simultáneos no multiplican las peticiones,
-// solo se reparten los mismos huecos. Dentro de cada archivo los chunks se
-// reparten entre los workers de concurrency.ts. Protege el rate limit global del
-// backend (compartido con el resto de la app — RateLimiterExtensions.cs): si
-// aun así se agota (muchos archivos pequeños = 3 peticiones cada uno), la cola
-// se pausa entera y se reanuda sola, ver rateLimit.ts.
-export const MAX_CONCURRENT_UPLOADS = 2
+// Nº máximo de archivos GRANDES (de más de un chunk, subida por sesión) subiendo a
+// la vez. Es independiente del paralelismo de chunks de arriba: el tope de chunks
+// en vuelo es global, así que más archivos simultáneos no multiplican las
+// peticiones, solo se reparten los mismos huecos. Dentro de cada archivo los
+// chunks se reparten entre los workers de concurrency.ts. Protege el rate limit
+// global del backend (compartido con el resto de la app — RateLimiterExtensions.cs):
+// si aun así se agota, la cola se pausa entera y se reanuda sola, ver rateLimit.ts.
+export const MAX_CONCURRENT_CHUNKED_UPLOADS = 2
+
+// Nº máximo de archivos PEQUEÑOS (subida directa, una sola petición) subiendo a la
+// vez. Cada uno ocupa un hueco del semáforo global de chunks, así que más de
+// MAX_PARALLEL_CHUNK_UPLOADS solo mostraría filas «subiendo» al 0 % esperando turno:
+// se deriva de él para que siga siendo el único mando de cuántas peticiones de
+// carga viajan a la vez (§7.4). Antes los pequeños compartían el tope de 2 con los
+// grandes, y con una petición por archivo (ida y vuelta dominante) dejaban huecos
+// del semáforo sin usar. SIN MEDIR en la Raspberry Pi real: si el servidor se
+// satura (disco, Postgres), bajar MAX_PARALLEL_CHUNK_UPLOADS lo baja todo a la vez.
+export const MAX_CONCURRENT_DIRECT_UPLOADS = MAX_PARALLEL_CHUNK_UPLOADS
 
 const MAX_CHUNK_ATTEMPTS = 3
 const BASE_RETRY_DELAY_MS = 500
@@ -53,7 +64,7 @@ const BASE_RETRY_DELAY_MS = 500
 // 32MB legítimamente lento en una conexión pobre aunque siguiera avanzando —
 // por eso este chunk desactiva ese timeout (`timeout: 0`) y usa en su lugar
 // este temporizador que se reinicia en cada evento de progreso real.
-const STALL_TIMEOUT_MS = 20_000
+export const STALL_TIMEOUT_MS = 20_000
 
 export type ChunkPlan = {
   totalChunks: number
@@ -128,18 +139,18 @@ export async function initUploadSession(
   return uploadInitResponseSchema.parse(unwrap(response.data)).sessionId
 }
 
-async function sendChunk(
-  sessionId: string,
-  chunkNumber: number,
-  blob: Blob,
+/**
+ * POST multipart con el control de «conexión colgada» de CLAUDE.md §7.4. Lo comparten
+ * los chunks y la subida directa: las dos mandan cuerpos grandes por una conexión que
+ * puede tardar legítimamente más que cualquier timeout fijo. Devuelve el `data` del
+ * envelope ya desenvuelto (lanza si `result` es false).
+ */
+async function postFormWithStallGuard(
+  url: string,
+  formData: FormData,
   signal: AbortSignal,
   onProgress: (loadedBytes: number) => void,
-): Promise<void> {
-  const formData = new FormData()
-  formData.append('sessionId', sessionId)
-  formData.append('chunkNumber', String(chunkNumber))
-  formData.append('chunk', blob)
-
+): Promise<unknown> {
   // Puente entre la cancelación real (signal, viene de cancelEntry/§7.4) y el
   // aborto por stall de abajo — cualquiera de los dos corta la petición.
   const requestController = new AbortController()
@@ -154,7 +165,7 @@ async function sendChunk(
   resetStallTimer()
 
   try {
-    const response = await api.post<ApiObjResponse<unknown>>('/files/upload/chunk', formData, {
+    const response = await api.post<ApiObjResponse<unknown>>(url, formData, {
       signal: requestController.signal,
       timeout: 0, // sin techo de duración total — lo controla el temporizador de stall
       onUploadProgress: (event) => {
@@ -162,11 +173,52 @@ async function sendChunk(
         onProgress(event.loaded)
       },
     })
-    unwrap(response.data)
+    return unwrap(response.data)
   } finally {
     clearTimeout(stallTimer)
     signal.removeEventListener('abort', onOuterAbort)
   }
+}
+
+async function sendChunk(
+  sessionId: string,
+  chunkNumber: number,
+  blob: Blob,
+  signal: AbortSignal,
+  onProgress: (loadedBytes: number) => void,
+): Promise<void> {
+  const formData = new FormData()
+  formData.append('sessionId', sessionId)
+  formData.append('chunkNumber', String(chunkNumber))
+  formData.append('chunk', blob)
+  await postFormWithStallGuard('/files/upload/chunk', formData, signal, onProgress)
+}
+
+/**
+ * POST /files — subida directa de un archivo de UNA sola petición (FilesController
+ * .UploadFileAsync): sin sesión, sin `complete` ni consultas de estado, y la respuesta
+ * ya trae el archivo creado (201). Para archivos que caben en un chunk (directUpload.ts).
+ *
+ * ⚠️ NO es idempotente, a diferencia de un chunk: el backend admite nombres de archivo
+ * repetidos, así que repetir la petición cuando la primera sí llegó crea un DUPLICADO.
+ * Por eso NO reintenta por su cuenta (no hay un `uploadFileDirectWithRetry`) y quien la
+ * llama solo debe repetirla ante un 429 (rechazado antes del controller, seguro) —
+ * ver `isOutcomeUncertain` en directUpload.ts.
+ *
+ * PENDIENTE (CLAUDE.md §5.4): contrato SIN VERIFICAR contra el código vivo (el
+ * endpoint estaba comentado cuando se escribió esto): `file` y `folderId` opcional en
+ * multipart, 201 con UploadFileResponseDto. Releer el controller al activarse.
+ */
+export async function uploadFileDirect(
+  params: { file: File; folderId: number | null },
+  signal: AbortSignal,
+  onProgress: (loadedBytes: number) => void,
+): Promise<UploadFileResponse> {
+  const formData = new FormData()
+  formData.append('file', params.file)
+  // Sin `folderId` = raíz (el parámetro del controller es `int?`); nunca "null" como texto.
+  if (params.folderId !== null) formData.append('folderId', String(params.folderId))
+  return uploadFileResponseSchema.parse(await postFormWithStallGuard('/files', formData, signal, onProgress))
 }
 
 /**

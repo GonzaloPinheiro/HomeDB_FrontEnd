@@ -39,7 +39,7 @@ export function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
  * siguiente.
  *
  * Sin esto, cada archivo falla por su cuenta en cuanto el cupo se agota — y
- * como cada fallo libera un hueco de concurrencia (MAX_CONCURRENT_UPLOADS),
+ * como cada fallo libera un hueco de concurrencia (scheduler.ts),
  * arranca el siguiente archivo en cola, su `init` también recibe 429 y falla
  * al instante: la cola entera se quema en segundos con todos en error.
  */

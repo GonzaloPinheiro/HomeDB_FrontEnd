@@ -8,7 +8,7 @@ function abortError(): DOMException {
 /**
  * Semáforo asíncrono con cola FIFO. Limita cuántos chunks viajan a la vez en
  * TODA la cola de subidas, sumando todos los archivos: sin él, el paralelismo
- * por archivo se multiplicaría por MAX_CONCURRENT_UPLOADS (§7.4).
+ * por archivo se multiplicaría por el nº de archivos subiendo a la vez (§7.4).
  */
 export class AsyncSemaphore {
   private available: number
