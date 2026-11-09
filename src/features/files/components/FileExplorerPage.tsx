@@ -24,7 +24,7 @@ import { useFileDropZone } from '@/shared/hooks/useFileDropZone'
 import { downloadFile, useBulkMove, useFolderContents, useMoveFile } from '../api'
 import { sortExplorerItems, type SortDirection, type SortKey } from '../sort'
 import type { Crumb, ExplorerItem } from '../types'
-import { useUploadQueue } from '../uploadQueue/UploadQueueContext'
+import { useUploadQueueActions } from '../uploadQueue/UploadQueueContext'
 import { useDwell } from '../useDwell'
 import { useExplorerShortcuts } from '../useExplorerShortcuts'
 import { useFileSelection } from '../useFileSelection'
@@ -116,7 +116,9 @@ export function FileExplorerPage() {
   const contents = useFolderContents(folderId)
   const moveFile = useMoveFile(folderId)
   const bulkMove = useBulkMove(folderId)
-  const uploadQueue = useUploadQueue()
+  // Solo acciones (estables): el estado de la cola cambia en cada tick de progreso y
+  // re-renderizaría esta pantalla entera (§7.4). El avance lo pintan la bandeja y el panel.
+  const uploadQueue = useUploadQueueActions()
 
   // Drag & drop (§6.3/§7.5): sensores de puntero, nunca HTML5 DnD (§10)
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))

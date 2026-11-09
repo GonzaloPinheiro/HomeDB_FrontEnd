@@ -21,7 +21,9 @@ import {
   type ScanResult,
   type TreeFile,
 } from './directoryTree'
+import { summarizeEntries } from './entryList'
 import { FolderResolver } from './folderResolver'
+import { InvalidationBatcher } from './invalidationBatcher'
 import {
   CHUNK_SIZE_BYTES,
   MAX_CONCURRENT_UPLOADS,
@@ -44,7 +46,13 @@ import {
 } from './treeUpload'
 import type { ChunkStatus, UploadQueueEntry, UploadTarget } from './types'
 
-type UploadQueueContextValue = {
+// CLAUDE.md §7.4: el Context se parte en DOS, y esa partición es la decisión de
+// rendimiento: el estado cambia en cada tick de progreso de cualquier archivo, las
+// acciones no cambian nunca. Con un único Context, cada tick re-renderizaba a todo
+// consumidor — incluido el explorador de archivos entero (lista incluida), que solo
+// necesita `openPanel`/`addDropped`. Quien solo ACTÚA usa `useUploadQueueActions`;
+// quien PINTA la cola usa `useUploadQueueState`.
+type UploadQueueState = {
   entries: UploadQueueEntry[]
   isPanelOpen: boolean
   /**
@@ -55,6 +63,10 @@ type UploadQueueContextValue = {
   rateLimitedUntil: number | null
   /** Presente = el panel puede añadir archivos nuevos a esa carpeta; ausente = solo consulta (abierto desde la bandeja, §6.16). */
   activeTarget: UploadTarget | null
+}
+
+/** Referencialmente estable durante toda la vida del Provider (ver el comentario de arriba). */
+type UploadQueueActions = {
   openPanel: (target?: UploadTarget) => void
   closePanel: () => void
   /**
@@ -84,7 +96,8 @@ type UploadQueueContextValue = {
   removeEntry: (id: string) => void
 }
 
-const UploadQueueContext = createContext<UploadQueueContextValue | null>(null)
+const UploadQueueStateContext = createContext<UploadQueueState | null>(null)
+const UploadQueueActionsContext = createContext<UploadQueueActions | null>(null)
 
 // Señal que nunca se aborta, para las peticiones de crear/consultar carpetas: ese
 // trabajo lo comparten todos los archivos que necesitan la carpeta (folderResolver.ts),
@@ -131,6 +144,18 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
   // mando del paralelismo: da igual cuántos archivos suban a la vez.
   const [chunkSlots] = useState(() => new AsyncSemaphore(MAX_PARALLEL_CHUNK_UPLOADS))
 
+  // Agrupa las invalidaciones de caché de los archivos que terminan (§7.4,
+  // invalidationBatcher.ts): sin esto, cada archivo gasta 2 peticiones extra de refresco.
+  const [invalidationBatcher] = useState(
+    () =>
+      new InvalidationBatcher(({ folderIds, storageUsage }) => {
+        for (const folderId of folderIds) {
+          void queryClient.invalidateQueries({ queryKey: filesKeys.contents(folderId) })
+        }
+        if (storageUsage) void queryClient.invalidateQueries({ queryKey: filesKeys.storageUsage })
+      }),
+  )
+
   // Crea o reutiliza las carpetas de destino de las subidas de carpeta (§7.4). Sus
   // peticiones pasan por la misma pausa de rate limit que el resto de la cola.
   const [folderResolver] = useState(
@@ -147,7 +172,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
           },
         },
         // Para que la carpeta nueva aparezca ya en la lista de su padre si se está viendo.
-        (parentId) => void queryClient.invalidateQueries({ queryKey: filesKeys.contents(parentId) }),
+        (parentId) => invalidationBatcher.markChanged(parentId),
       ),
   )
 
@@ -158,6 +183,10 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
   // archivo), en orden de llegada: da el nº de esperas simultáneas (cadencia de
   // consultas) y lo que tenía delante cada una (plazo de espera) — completion.ts.
   const processingBytesRef = useRef(new Map<string, number>())
+  // Espejos de lo que las acciones necesitan LEER sin depender de ello: si leyeran el
+  // estado, dejarían de ser estables y el Context de acciones no serviría de nada.
+  const entriesRef = useRef<UploadQueueEntry[]>([])
+  const activeTargetRef = useRef<UploadTarget | null>(null)
 
   const patchEntry = useCallback((id: string, patch: Partial<UploadQueueEntry>) => {
     setEntries((current) => current.map((entry) => (entry.id === id ? { ...entry, ...patch } : entry)))
@@ -340,8 +369,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
         }
 
         patchEntry(entry.id, { status: 'done', progress: 100, uploadedBytes: entry.file.size, speedBytesPerSec: null })
-        void queryClient.invalidateQueries({ queryKey: filesKeys.contents(destinationFolderId) })
-        void queryClient.invalidateQueries({ queryKey: filesKeys.storageUsage })
+        invalidationBatcher.markChanged(destinationFolderId, { storageUsage: true })
       } catch (error) {
         if (controller.signal.aborted) {
           patchEntry(entry.id, { status: 'cancelled', speedBytesPerSec: null })
@@ -395,7 +423,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
         controllersRef.current.delete(entry.id)
       }
     },
-    [chunkSlots, folderResolver, patchEntry, queryClient, rateLimitGate, setChunkStatus],
+    [chunkSlots, folderResolver, invalidationBatcher, patchEntry, rateLimitGate, setChunkStatus],
   )
 
   // Limpia el aviso de pausa al llegar su instante. Comparar contra el valor
@@ -425,14 +453,31 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
     }
   }, [entries, patchEntry, runPipeline])
 
+  // Los efectos de abajo solo necesitan saber SI hay actividad, no cada cambio de la
+  // lista: con un booleano como dependencia se ejecutan al cambiar de estado la cola,
+  // no en cada tick de progreso (antes el aviso de cierre se quitaba y volvía a poner
+  // en cada uno).
+  const summary = useMemo(() => summarizeEntries(entries), [entries])
+  const hasQueuedOrUploading = summary.queued + summary.uploading > 0
+  // 'processing' cuenta aquí: su archivo aún no existe en el servidor (§7.4).
+  const isBusy = hasQueuedOrUploading || summary.processing > 0
+
   // El resolvedor de carpetas recuerda qué carpetas existen mientras hay subidas en
   // marcha (para no crear una dos veces ni preguntar por ella en cada archivo). Con
   // la cola ya inactiva ese recuerdo puede estar desfasado —el usuario borra o crea
   // carpetas—, así que se olvida y un "Reintentar" posterior vuelve a consultar.
   useEffect(() => {
-    const hasActive = entries.some((e) => e.status === 'queued' || e.status === 'uploading')
-    if (!hasActive) folderResolver.clear()
-  }, [entries, folderResolver])
+    if (!hasQueuedOrUploading) folderResolver.clear()
+  }, [hasQueuedOrUploading, folderResolver])
+
+  // Cola inactiva: lo último que se subió debe verse YA, sin esperar al cierre de la
+  // ventana de invalidaciones (invalidationBatcher.ts). Sin nada pendiente no hace nada.
+  useEffect(() => {
+    if (!isBusy) invalidationBatcher.flushNow()
+  }, [isBusy, invalidationBatcher])
+
+  // Al desmontar el Provider (cierre de sesión) no debe quedar ningún temporizador vivo.
+  useEffect(() => () => invalidationBatcher.dispose(), [invalidationBatcher])
 
   // Aviso nativo si se cierra/recarga la pestaña con subidas en curso — cerrar
   // el PANEL nunca pierde nada (§6.5), pero cerrar la pestaña del navegador sí
@@ -440,16 +485,24 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
   // 'processing' queda fuera a propósito: con todos los chunks ya en el servidor,
   // el worker en background termina el archivo aunque se cierre la pestaña.
   useEffect(() => {
-    const hasActive = entries.some((e) => e.status === 'queued' || e.status === 'uploading')
-    if (!hasActive) return
+    if (!hasQueuedOrUploading) return
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault()
     }
     window.addEventListener('beforeunload', onBeforeUnload)
     return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [hasQueuedOrUploading])
+
+  // Espejo de `entries` para las acciones (ver `entriesRef`). Se actualiza en un efecto
+  // y no durante el render, que es donde React no admite escribir en una ref.
+  useEffect(() => {
+    entriesRef.current = entries
   }, [entries])
 
   const openPanel = useCallback((target?: UploadTarget) => {
+    // Único sitio que cambia el destino activo: el espejo se escribe aquí, a la vez que
+    // el estado, para que un `addFiles` inmediato ya lo vea (addFiles lee la ref).
+    activeTargetRef.current = target ?? null
     setActiveTarget(target ?? null)
     setIsPanelOpen(true)
   }, [])
@@ -485,18 +538,18 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const addFiles = useCallback(
-    (files: File[], target: UploadTarget | null = activeTarget): number => {
+    (files: File[], target: UploadTarget | null = activeTargetRef.current): number => {
       if (!target) return 0
       return enqueueTree(
         files.map((file) => ({ file, dirs: [] })),
         target,
       )
     },
-    [activeTarget, enqueueTree],
+    [enqueueTree],
   )
 
   const addFolderFiles = useCallback(
-    (files: File[], target: UploadTarget | null = activeTarget): number => {
+    (files: File[], target: UploadTarget | null = activeTargetRef.current): number => {
       if (!target) return 0
       if (files.length > MAX_FOLDER_SCAN_FILES) {
         toast.error(scanLimitMessage())
@@ -504,11 +557,11 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
       }
       return enqueueTree(treeFilesFromRelativePaths(files), target)
     },
-    [activeTarget, enqueueTree],
+    [enqueueTree],
   )
 
   const addDropped = useCallback(
-    async (dropped: DroppedItems, target: UploadTarget | null = activeTarget): Promise<number> => {
+    async (dropped: DroppedItems, target: UploadTarget | null = activeTargetRef.current): Promise<number> => {
       if (!target) return 0
       if (dropped.directories.length === 0) return addFiles(dropped.files, target)
 
@@ -528,7 +581,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
 
       return enqueueTree([...dropped.files.map((file) => ({ file, dirs: [] })), ...scan.files], target)
     },
-    [activeTarget, addFiles, enqueueTree],
+    [addFiles, enqueueTree],
   )
 
   const cancelEntry = useCallback(
@@ -536,8 +589,10 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
       // Una entrada en 'processing' ya no se puede cancelar: todos los chunks
       // están en el servidor y su worker en background terminará el archivo
       // igualmente (no hay endpoint para pararlo, §5.4). Marcarla 'cancelada'
-      // mentiría: el archivo acabaría apareciendo en la carpeta.
-      if (entries.find((entry) => entry.id === id)?.status === 'processing') return
+      // mentiría: el archivo acabaría apareciendo en la carpeta. `processingBytesRef`
+      // contiene exactamente las entradas en ese estado (runPipeline las añade al
+      // pasar a 'processing' y las quita al terminar), y no obliga a leer `entries`.
+      if (processingBytesRef.current.has(id)) return
       const controller = controllersRef.current.get(id)
       if (controller) {
         controller.abort() // el catch de runPipeline marca 'cancelled'
@@ -545,7 +600,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
         patchEntry(id, { status: 'cancelled' }) // aún en cola, no había arrancado
       }
     },
-    [entries, patchEntry],
+    [patchEntry],
   )
 
   const retryEntry = useCallback(
@@ -559,7 +614,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
   )
 
   const retryAllFailed = useCallback(() => {
-    const failedIds = new Set(entries.filter((e) => e.status === 'error').map((e) => e.id))
+    const failedIds = new Set(entriesRef.current.filter((e) => e.status === 'error').map((e) => e.id))
     if (failedIds.size === 0) return
     for (const id of failedIds) startedRef.current.delete(id)
     // Mismas reglas que retryEntry (conserva sessionId para reanudar con GET /status),
@@ -570,7 +625,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
         failedIds.has(entry.id) ? { ...entry, status: 'queued', error: undefined, errorCode: undefined } : entry,
       ),
     )
-  }, [entries])
+  }, [])
 
   const removeEntry = useCallback((id: string) => {
     startedRef.current.delete(id)
@@ -584,7 +639,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
   // usuario decida (sigue teniendo el botón "Reintentar" manual).
   useEffect(() => {
     const onOnline = () => {
-      for (const entry of entries) {
+      for (const entry of entriesRef.current) {
         if (entry.status === 'error' && entry.errorCode === null) {
           retryEntry(entry.id)
         }
@@ -592,14 +647,17 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
     }
     window.addEventListener('online', onOnline)
     return () => window.removeEventListener('online', onOnline)
-  }, [entries, retryEntry])
+  }, [retryEntry])
 
-  const value = useMemo<UploadQueueContextValue>(
+  const state = useMemo<UploadQueueState>(
+    () => ({ entries, isPanelOpen, rateLimitedUntil, activeTarget }),
+    [entries, isPanelOpen, rateLimitedUntil, activeTarget],
+  )
+
+  // Todas las acciones son estables (no leen estado, solo refs y setters), así que este
+  // valor se crea una vez: es lo que evita re-renders al consumirlo (ver arriba).
+  const actions = useMemo<UploadQueueActions>(
     () => ({
-      entries,
-      isPanelOpen,
-      rateLimitedUntil,
-      activeTarget,
       openPanel,
       closePanel,
       addFiles,
@@ -610,30 +668,30 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
       retryAllFailed,
       removeEntry,
     }),
-    [
-      entries,
-      isPanelOpen,
-      rateLimitedUntil,
-      activeTarget,
-      openPanel,
-      closePanel,
-      addFiles,
-      addDropped,
-      addFolderFiles,
-      cancelEntry,
-      retryEntry,
-      retryAllFailed,
-      removeEntry,
-    ],
+    [openPanel, closePanel, addFiles, addDropped, addFolderFiles, cancelEntry, retryEntry, retryAllFailed, removeEntry],
   )
 
-  return <UploadQueueContext.Provider value={value}>{children}</UploadQueueContext.Provider>
+  return (
+    <UploadQueueActionsContext.Provider value={actions}>
+      <UploadQueueStateContext.Provider value={state}>{children}</UploadQueueStateContext.Provider>
+    </UploadQueueActionsContext.Provider>
+  )
 }
 
-export function useUploadQueue(): UploadQueueContextValue {
-  const context = useContext(UploadQueueContext)
+/** Estado de la cola — cambia en cada tick de progreso: úsalo solo donde se PINTA la cola (panel, bandeja). */
+export function useUploadQueueState(): UploadQueueState {
+  const context = useContext(UploadQueueStateContext)
   if (!context) {
-    throw new Error('useUploadQueue debe usarse dentro de <UploadQueueProvider>')
+    throw new Error('useUploadQueueState debe usarse dentro de <UploadQueueProvider>')
+  }
+  return context
+}
+
+/** Acciones de la cola — referencialmente estables: usarlas no re-renderiza al consumidor cuando avanza una subida. */
+export function useUploadQueueActions(): UploadQueueActions {
+  const context = useContext(UploadQueueActionsContext)
+  if (!context) {
+    throw new Error('useUploadQueueActions debe usarse dentro de <UploadQueueProvider>')
   }
   return context
 }

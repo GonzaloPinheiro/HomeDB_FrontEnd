@@ -158,7 +158,8 @@ export function useDeleteFile(folderId: number | null) {
 // mutation suelta — es un pipeline por chunks que debe seguir corriendo
 // aunque el componente que lo inició se desmonte (cerrar el modal, cambiar
 // de página), así que vive en un Context montado en AppShell:
-// `features/files/uploadQueue/UploadQueueContext.tsx` (`useUploadQueue`).
+// `features/files/uploadQueue/UploadQueueContext.tsx` (`useUploadQueueState` /
+// `useUploadQueueActions`, dos Contexts a propósito, ver §7.4).
 // `filesKeys` se sigue exportando desde aquí porque esa misma pieza lo usa
 // para invalidar caché al completar una subida.
 
