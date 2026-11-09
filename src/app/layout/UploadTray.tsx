@@ -1,6 +1,6 @@
 import { CircleAlert, Loader2, UploadCloud } from 'lucide-react'
 
-import { useUploadQueue } from '@/features/files/uploadQueue/UploadQueueContext'
+import { useUploadQueueActions, useUploadQueueState } from '@/features/files/uploadQueue/UploadQueueContext'
 import { usePermissions } from '@/shared/hooks/usePermissions'
 import { formatBytes } from '@/shared/lib/formatBytes'
 
@@ -12,7 +12,8 @@ import { formatBytes } from '@/shared/lib/formatBytes'
 // bandeja no habría forma de saberlo ni de volver a abrir el detalle.
 export function UploadTray() {
   const { hasModule } = usePermissions()
-  const { entries, isPanelOpen, openPanel } = useUploadQueue()
+  const { entries, isPanelOpen } = useUploadQueueState()
+  const { openPanel } = useUploadQueueActions()
 
   // Los endpoints de subida exigen el módulo Files — sin él, la cola siempre
   // está vacía, pero se guarda explícito igual que StorageWidget (§6.12).

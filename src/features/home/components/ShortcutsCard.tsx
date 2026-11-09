@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
 
-import { useUploadQueue } from '@/features/files/uploadQueue/UploadQueueContext'
+import { useUploadQueueActions } from '@/features/files/uploadQueue/UploadQueueContext'
 import { usePermissions } from '@/shared/hooks/usePermissions'
 import { cn } from '@/shared/lib/utils'
 
@@ -66,7 +66,7 @@ function Shortcut({ to, onClick, disabled = false, ...content }: ShortcutProps):
 // archivos" en su lugar, en vez de un atajo que no podría crear nada.
 export function ShortcutsCard() {
   const { hasModule } = usePermissions()
-  const { openPanel } = useUploadQueue()
+  const { openPanel } = useUploadQueueActions()
   const hasFiles = hasModule('Files')
 
   return (
