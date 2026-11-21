@@ -157,6 +157,36 @@ export function isRateLimitError(error: ApiError): boolean {
 }
 
 /**
+ * CLAUDE.md §5.1: 1028 (disco caído, 503) y 1029 (no cabe, 507) son respuestas
+ * deterministas del backend sobre el estado del disco, no caídas del servidor:
+ * repetir la misma petición a los pocos segundos no las arregla.
+ */
+export function isStorageLocationError(error: ApiError): boolean {
+  return (
+    error.errorCode === ApiErrorCodes.StorageLocationUnavailable ||
+    error.errorCode === ApiErrorCodes.StorageLocationFull
+  )
+}
+
+/**
+ * Una petición con `responseType: 'blob'` (descarga de archivo, §5.1) recibe
+ * TAMBIÉN el cuerpo del error como `Blob`, así que `toApiError` no reconoce el
+ * envelope y todo fallo se vería como un error de red genérico. Esto lo lee
+ * como JSON y lo deja en `response.data`; si no es JSON (p. ej. la página de
+ * error de un proxy) el error queda como estaba. Llamarlo en el `catch` de la
+ * petición, antes de `toApiError`.
+ */
+export async function readBlobErrorBody(error: unknown): Promise<unknown> {
+  if (!axios.isAxiosError(error) || !(error.response?.data instanceof Blob)) return error
+  try {
+    error.response.data = JSON.parse(await error.response.data.text()) as unknown
+  } catch {
+    // Cuerpo ilegible o que no es JSON: se conserva el error original.
+  }
+  return error
+}
+
+/**
  * Predicado `retry` por defecto de TanStack Query. Un 4xx (403 sin módulo, 404
  * `MetricNotFound`, 429...) es una respuesta determinista del backend: repetirla
  * solo retrasa unos segundos el estado de error/vacío y, con el 429, gasta más

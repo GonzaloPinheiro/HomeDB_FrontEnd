@@ -4,7 +4,7 @@ import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError } from '@/shared/api/client'
-import { ApiErrorCodes } from '@/shared/api/errors'
+import { ApiErrorCodes, getErrorMessage } from '@/shared/api/errors'
 
 import { filesKeys } from '../api'
 import type { UploadStatusResponse } from '../types'
@@ -147,6 +147,69 @@ describe('UploadQueueProvider — acciones estables', () => {
     await waitFor(() => expect(result.current.state.entries[0].status).toBe('uploading'))
     expect(mocked.initUploadSession).toHaveBeenCalledTimes(2)
   })
+})
+
+describe('UploadQueueProvider — errores de almacenamiento (1028 / 1029, CLAUDE.md §5.4)', () => {
+  async function advance(totalMs: number) {
+    for (let elapsed = 0; elapsed < totalMs; elapsed += 250) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(250)
+      })
+    }
+  }
+
+  it('un 503/507 al iniciar deja la fila en error con su mensaje y NO se reintenta sola al volver la conexión', async () => {
+    mocked.initUploadSession.mockRejectedValue(
+      new ApiError(ApiErrorCodes.StorageLocationFull, getErrorMessage(ApiErrorCodes.StorageLocationFull), {
+        httpStatus: 507,
+      }),
+    )
+    const { result } = renderQueue()
+    act(() => result.current.actions.openPanel(TARGET))
+    act(() => {
+      result.current.actions.addFiles(createFiles(1))
+    })
+    await waitFor(() => expect(result.current.state.entries[0]?.status).toBe('error'))
+
+    const entry = result.current.state.entries[0]
+    expect(entry.errorCode).toBe(ApiErrorCodes.StorageLocationFull)
+    expect(entry.error).toBe('No hay espacio suficiente en el almacenamiento del servidor')
+
+    // errorCode real = rechazo del servidor, no un corte de red: el efecto de 'online' no lo toca
+    act(() => {
+      window.dispatchEvent(new Event('online'))
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(result.current.state.entries[0].status).toBe('error')
+    expect(mocked.initUploadSession).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([ApiErrorCodes.StorageLocationUnavailable, ApiErrorCodes.StorageLocationFull])(
+    'una sesión cancelada en segundo plano con %s se muestra con su mensaje y descarta la sesión muerta',
+    async (errorCode) => {
+      vi.useFakeTimers()
+      mocked.initUploadSession.mockResolvedValue('sesion-muerta')
+      mocked.uploadChunkWithRetry.mockResolvedValue(undefined)
+      mocked.completeUploadSession.mockResolvedValue(undefined)
+      mocked.getUploadStatus.mockResolvedValue({ ...COMPLETED, status: 'cancelled', errorCode })
+
+      const { result } = renderQueue()
+      act(() => result.current.actions.openPanel(TARGET))
+      act(() => {
+        result.current.actions.addFiles(createFiles(1))
+      })
+      await advance(3_000)
+
+      const entry = result.current.state.entries[0]
+      expect(entry.status).toBe('error')
+      expect(entry.errorCode).toBe(errorCode)
+      expect(entry.error).toBe(getErrorMessage(errorCode))
+      // "Reintentar" empieza una subida nueva en vez de reanudar una sesión que ya no sirve
+      expect(entry.sessionId).toBeUndefined()
+    },
+  )
 })
 
 describe('UploadQueueProvider — invalidaciones de caché agrupadas', () => {

@@ -3,7 +3,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { ApiObjResponse } from '@/shared/types/api'
 
-import { ApiError, api, isRateLimitError, setOnSessionExpired, shouldRetryQuery, toApiError, unwrap } from './client'
+import {
+  ApiError,
+  api,
+  isRateLimitError,
+  isStorageLocationError,
+  readBlobErrorBody,
+  setOnSessionExpired,
+  shouldRetryQuery,
+  toApiError,
+  unwrap,
+} from './client'
 import { ApiErrorCodes, getErrorMessage } from './errors'
 
 function envelope<T>(partial: Partial<ApiObjResponse<T>>): ApiObjResponse<T> {
@@ -91,6 +101,64 @@ describe('rate limit (429)', () => {
 
   it('un error de red sin respuesta no es rate limit', () => {
     expect(isRateLimitError(toApiError(new AxiosError('Network Error')))).toBe(false)
+  })
+})
+
+describe('almacenamiento multi-ubicación (1028 / 1029, CLAUDE.md §5.1)', () => {
+  function storageError(status: number, errorCode: number) {
+    const axiosError = new AxiosError(`status ${status}`)
+    axiosError.response = {
+      status,
+      data: envelope({ result: false, errorCode, errorMessage: 'Storage disk is not available' }),
+    } as never
+    return axiosError
+  }
+
+  it('usa un mensaje propio en español, no el errorMessage en inglés del backend', () => {
+    const unavailable = toApiError(storageError(503, ApiErrorCodes.StorageLocationUnavailable))
+    const full = toApiError(storageError(507, ApiErrorCodes.StorageLocationFull))
+    expect(unavailable.httpStatus).toBe(503)
+    expect(unavailable.message).not.toContain('Storage')
+    expect(full.httpStatus).toBe(507)
+    expect(full.message).toBe('No hay espacio suficiente en el almacenamiento del servidor')
+    // Y distinto de la cuota del usuario (1016)
+    expect(full.message).not.toBe(getErrorMessage(ApiErrorCodes.StorageLimitExceeded))
+  })
+
+  it('isStorageLocationError reconoce 1028 y 1029, y nada más', () => {
+    expect(isStorageLocationError(toApiError(storageError(503, 1028)))).toBe(true)
+    expect(isStorageLocationError(toApiError(storageError(507, 1029)))).toBe(true)
+    expect(isStorageLocationError(toApiError(storageError(413, ApiErrorCodes.StorageLimitExceeded)))).toBe(false)
+    expect(isStorageLocationError(toApiError(new AxiosError('Network Error')))).toBe(false)
+  })
+})
+
+describe('readBlobErrorBody (descargas con responseType blob)', () => {
+  function blobError(body: string) {
+    const axiosError = new AxiosError('status 503')
+    axiosError.response = { status: 503, data: new Blob([body]) } as never
+    return axiosError
+  }
+
+  it('lee el envelope del Blob para que toApiError lo reconozca', async () => {
+    const body = JSON.stringify(
+      envelope({ result: false, errorCode: ApiErrorCodes.StorageLocationUnavailable, errorMessage: 'x' }),
+    )
+    const apiError = toApiError(await readBlobErrorBody(blobError(body)))
+    expect(apiError.errorCode).toBe(ApiErrorCodes.StorageLocationUnavailable)
+    expect(apiError.httpStatus).toBe(503)
+  })
+
+  it('un cuerpo que no es JSON deja el error como estaba (mensaje genérico)', async () => {
+    const apiError = toApiError(await readBlobErrorBody(blobError('<html>Bad gateway</html>')))
+    expect(apiError.errorCode).toBeNull()
+    expect(apiError.message).toBe(getErrorMessage(null))
+  })
+
+  it('no toca errores que no traen un Blob', async () => {
+    const error = new AxiosError('Network Error')
+    expect(await readBlobErrorBody(error)).toBe(error)
+    expect(await readBlobErrorBody('no es axios')).toBe('no es axios')
   })
 })
 
