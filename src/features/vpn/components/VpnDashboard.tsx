@@ -6,6 +6,7 @@ import { toApiError } from '@/shared/api/client'
 import { EmptyState } from '@/shared/components/EmptyState'
 import { Button } from '@/shared/components/ui/button'
 import { useNow } from '@/shared/hooks/useNow'
+import { formatAgo } from '@/shared/lib/formatDuration'
 
 import { useVpnDevices, useVpnOwners } from '../api'
 import { getVpnFailure } from '../failures'
@@ -22,7 +23,6 @@ import {
 import {
   describeSummary,
   findCompletedRevocations,
-  formatAgo,
   getSnapshotAgeMs,
   isRevocationOverdue,
   isSnapshotStale,

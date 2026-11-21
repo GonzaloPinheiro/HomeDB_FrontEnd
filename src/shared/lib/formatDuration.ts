@@ -37,3 +37,18 @@ export function formatMillis(ms: number): string {
   const seconds = tenths % 10 === 0 ? String(tenths / 10) : (tenths / 10).toFixed(1).replace('.', ',')
   return `${seconds} s`
 }
+
+/**
+ * Milisegundos transcurridos -> "hace 8 s" / "hace 5 min" / "hace 3 h" / "hace 1 día" / "hace 19 días".
+ * Nunca enseña tiempo negativo: el reloj del navegador puede ir por detrás del del servidor
+ * (VPN §6.22, almacenamiento §6.13). Antes vivía en `features/vpn`; subió a `shared/` al usarlo
+ * también el Monitor.
+ */
+export function formatAgo(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000))
+  if (seconds < 60) return `hace ${seconds} s`
+  if (seconds < 3600) return `hace ${Math.floor(seconds / 60)} min`
+  if (seconds < 86_400) return `hace ${Math.floor(seconds / 3600)} h`
+  const days = Math.floor(seconds / 86_400)
+  return days === 1 ? 'hace 1 día' : `hace ${days} días`
+}

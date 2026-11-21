@@ -1,9 +1,10 @@
 import { Info, RefreshCw } from 'lucide-react'
 
 import { Button } from '@/shared/components/ui/button'
+import { formatAgo } from '@/shared/lib/formatDuration'
 import { cn } from '@/shared/lib/utils'
 
-import { formatAgo, getSnapshotAgeMs, isSnapshotStale } from '../presentation'
+import { getSnapshotAgeMs, isSnapshotStale } from '../presentation'
 import { MockBadge } from '../mock/MockBadge'
 import type { VpnSnapshot } from '../types'
 

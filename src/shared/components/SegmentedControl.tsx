@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react'
+
 import { cn } from '@/shared/lib/utils'
 
 export type SegmentedOption<T extends string> = {
@@ -5,6 +7,10 @@ export type SegmentedOption<T extends string> = {
   label: string
   /** Recuento opcional junto a la etiqueta (p. ej. "Activos 3"). */
   count?: number
+  /** Adorno antes de la etiqueta (p. ej. el indicador de estado de un disco, Monitor §6.13). Decorativo. */
+  leading?: ReactNode
+  /** Nombre accesible si debe decir más que la etiqueta visible (empezando por ella, WCAG 2.5.3). */
+  ariaLabel?: string
 }
 
 type SegmentedControlProps<T extends string> = {
@@ -35,18 +41,20 @@ export function SegmentedControl<T extends string>({
             key={option.value}
             type="button"
             aria-pressed={value === option.value}
+            aria-label={option.ariaLabel}
             onClick={() => onChange(option.value)}
             className={cn(
-              'whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium transition-colors',
+              'inline-flex items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1 text-sm font-medium transition-colors',
               'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
               value === option.value
                 ? 'bg-accent text-text-on-accent'
                 : 'text-text-secondary hover:bg-row-hover hover:text-text-primary',
             )}
           >
+            {option.leading}
             {option.label}
             {option.count !== undefined && (
-              <span className={cn('ml-1.5 text-xs font-normal', value === option.value ? 'opacity-80' : 'text-text-muted')}>
+              <span className={cn('text-xs font-normal', value === option.value ? 'opacity-80' : 'text-text-muted')}>
                 {option.count}
               </span>
             )}
