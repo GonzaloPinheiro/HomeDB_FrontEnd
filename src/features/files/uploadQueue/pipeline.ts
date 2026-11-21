@@ -1,4 +1,4 @@
-import { api, isRateLimitError, toApiError, unwrap } from '@/shared/api/client'
+import { api, isRateLimitError, isStorageLocationError, toApiError, unwrap } from '@/shared/api/client'
 import type { ApiObjResponse } from '@/shared/types/api'
 
 import {
@@ -180,6 +180,10 @@ async function sendChunk(
  * cupo que tarda ~60s en reponerse y solo malgastaría los intentos. Se
  * propaga de inmediato para que `withRateLimitRetry` (rateLimit.ts) pause toda
  * la cola y vuelva a lanzar el chunk cuando el cupo se haya repuesto.
+ *
+ * Tampoco se reintenta un 1028/1029 (disco temporal caído o sin espacio,
+ * CLAUDE.md §5.4): un disco que cae no vuelve en los ~3,5 s del backoff, y cada
+ * intento gastaría cupo del rate limiter global con cuatro chunks en vuelo.
  */
 export async function uploadChunkWithRetry(
   sessionId: string,
@@ -194,7 +198,14 @@ export async function uploadChunkWithRetry(
       return
     } catch (error) {
       const apiError = toApiError(error)
-      if (signal.aborted || attempt === MAX_CHUNK_ATTEMPTS || isRateLimitError(apiError)) throw apiError
+      if (
+        signal.aborted ||
+        attempt === MAX_CHUNK_ATTEMPTS ||
+        isRateLimitError(apiError) ||
+        isStorageLocationError(apiError)
+      ) {
+        throw apiError
+      }
       onProgress(0) // el intento fallido no cuenta como progreso parcial
       await delay(backoffDelayMs(attempt))
     }

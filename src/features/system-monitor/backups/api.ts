@@ -6,7 +6,7 @@ import { api, toApiError, unwrap } from '@/shared/api/client'
 import type { ApiObjResponse } from '@/shared/types/api'
 
 import { SAMPLE_INTERVAL_MS } from '../api'
-import { summarizeBackups } from './summary'
+import { summarizeBackups, triggerBackupErrorMessage } from './summary'
 import { backupEntrySchema, backupHistorySchema } from './types'
 
 // Entradas que muestra el panel (scroll interno). El backend admite hasta 200
@@ -119,7 +119,7 @@ export function useTriggerBackup() {
       if (apiError.errorCode === null) {
         toast.info('No se recibió respuesta del servidor. El backup puede seguir en curso: revisa el historial.')
       } else {
-        toast.error(apiError.message)
+        toast.error(triggerBackupErrorMessage(apiError))
       }
     },
     // Éxito o error, el historial manda: en ambos casos ya hay (o puede haber) un registro nuevo.

@@ -25,7 +25,9 @@ export function ViewerImage({ item, onDownload }: ViewerImageProps) {
     return (
       <ViewerError
         title="No se pudo cargar la imagen"
-        description="Puede que el archivo ya no esté disponible o que la conexión haya fallado."
+        // CLAUDE.md §6.3c/§5.4: un <img> no ve el código HTTP; el 503 de un disco caído se
+        // distingue de un 404 solo por la causa probable, así que se nombra entre ellas.
+        description="Puede que el archivo ya no esté disponible, que el disco donde se guarda no esté conectado o que la conexión haya fallado."
         onRetry={() => void retry()}
         onDownload={onDownload}
       />

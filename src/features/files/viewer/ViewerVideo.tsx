@@ -49,8 +49,8 @@ export function ViewerVideo({ item, onDownload }: ViewerVideoProps) {
       <ViewerError
         title="No se pudo reproducir el vídeo"
         // Chrome informa de "formato no soportado" también cuando el servidor responde
-        // con un error HTTP (401, 404…), así que el mensaje no afirma una sola causa.
-        description="El navegador no ha podido reproducirlo: el formato puede no ser compatible (por ejemplo, HEVC de algunos iPhone), el archivo puede no estar disponible o la conexión haber fallado. Puedes descargarlo y verlo con otro reproductor."
+        // con un error HTTP (401, 404, 503 por un disco caído…), así que el mensaje no afirma una sola causa.
+        description="El navegador no ha podido reproducirlo: el formato puede no ser compatible (por ejemplo, HEVC de algunos iPhone), el archivo puede no estar disponible (por ejemplo, si el disco donde se guarda no está conectado) o la conexión haber fallado. Puedes descargarlo y verlo con otro reproductor."
         onRetry={() => void retry()}
         onDownload={onDownload}
       />

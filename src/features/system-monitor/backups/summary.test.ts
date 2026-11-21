@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
-import { summarizeBackups, totalBackupBytes } from './summary'
+import { ApiError } from '@/shared/api/client'
+import { ApiErrorCodes } from '@/shared/api/errors'
+
+import { summarizeBackups, totalBackupBytes, triggerBackupErrorMessage } from './summary'
 import type { BackupEntry } from './types'
 
 function entry(overrides: Partial<BackupEntry>): BackupEntry {
@@ -59,5 +62,17 @@ describe('summarizeBackups', () => {
 describe('totalBackupBytes', () => {
   it('suma archivos + volcado de la base de datos', () => {
     expect(totalBackupBytes(entry({ filesBackedUpSizeBytes: 1000, databaseDumpSizeBytes: 200 }))).toBe(1200)
+  })
+})
+
+describe('triggerBackupErrorMessage (CLAUDE.md §5.4)', () => {
+  it('concreta el 1028 (disco de backups u origen caído) para el backup', () => {
+    const message = triggerBackupErrorMessage(new ApiError(ApiErrorCodes.StorageLocationUnavailable, 'genérico'))
+    expect(message).toContain('backup')
+    expect(message).toContain('no está disponible')
+  })
+
+  it('deja el mensaje mapeado de cualquier otro código', () => {
+    expect(triggerBackupErrorMessage(new ApiError(ApiErrorCodes.BackupAlreadyRunning, 'Ya hay uno'))).toBe('Ya hay uno')
   })
 })

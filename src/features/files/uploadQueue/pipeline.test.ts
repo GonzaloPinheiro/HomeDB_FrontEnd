@@ -1,4 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { AxiosError } from 'axios'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import { api } from '@/shared/api/client'
+import { ApiErrorCodes } from '@/shared/api/errors'
 
 import {
   BACKEND_CHUNK_REQUEST_LIMIT_BYTES,
@@ -7,6 +11,7 @@ import {
   aggregateProgress,
   backoffDelayMs,
   computeChunkPlan,
+  uploadChunkWithRetry,
 } from './pipeline'
 
 describe('constantes de la subida por chunks', () => {
@@ -93,5 +98,50 @@ describe('aggregateProgress', () => {
 
   it('0% si el tamaño total es inválido, sin dividir por cero', () => {
     expect(aggregateProgress(chunkSizes, [0, 0, 0], 0)).toBe(0)
+  })
+})
+
+describe('uploadChunkWithRetry — qué errores se reintentan (CLAUDE.md §7.4)', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  function failure(status: number | null, errorCode: number | null) {
+    const error = new AxiosError(status === null ? 'Network Error' : `status ${status}`)
+    if (status !== null) {
+      error.response = {
+        status,
+        data: { result: false, data: null, errorCode, errorMessage: 'x' },
+      } as never
+    }
+    return error
+  }
+
+  async function run(post: ReturnType<typeof vi.spyOn>) {
+    vi.useFakeTimers()
+    const outcome = uploadChunkWithRetry('sesion', 1, new Blob(['x']), new AbortController().signal, () => undefined)
+    const settled = outcome.then(
+      () => 'ok',
+      (error: unknown) => error,
+    )
+    await vi.runAllTimersAsync()
+    return { result: await settled, calls: post.mock.calls.length }
+  }
+
+  it.each([
+    ['1028 (disco temporal caído)', 503, ApiErrorCodes.StorageLocationUnavailable],
+    ['1029 (disco temporal sin espacio)', 507, ApiErrorCodes.StorageLocationFull],
+  ])('no reintenta un %s: un disco caído no vuelve en unos segundos', async (_label, status, errorCode) => {
+    const post = vi.spyOn(api, 'post').mockRejectedValue(failure(status, errorCode))
+    const { result, calls } = await run(post)
+    expect(calls).toBe(1)
+    expect(result).toMatchObject({ errorCode })
+  })
+
+  it('sigue reintentando un corte de red (sin respuesta) hasta el máximo de intentos', async () => {
+    const post = vi.spyOn(api, 'post').mockRejectedValue(failure(null, null))
+    const { calls } = await run(post)
+    expect(calls).toBe(3)
   })
 })

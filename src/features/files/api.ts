@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
-import { api, toApiError, unwrap } from '@/shared/api/client'
+import { api, readBlobErrorBody, toApiError, unwrap } from '@/shared/api/client'
 import type { ApiObjResponse } from '@/shared/types/api'
 
 import { BULK_CONCURRENCY, describeBulkOutcome, runBulk } from './bulk'
@@ -345,7 +345,14 @@ export function useStorageLimit() {
 export async function downloadFile(fileId: number, fallbackName: string): Promise<void> {
   // CLAUDE.md §7.4: sin el timeout de 30s de la instancia — una descarga
   // grande en una conexión lenta puede tardar perfectamente más que eso.
-  const response = await api.get<Blob>(`/files/${fileId}`, { responseType: 'blob', timeout: 0 })
+  // CLAUDE.md §5.1/§5.4: con `responseType: 'blob'` el cuerpo del error también es un
+  // Blob; se lee como JSON para que un 404 o un 503/1028 (disco caído) lleguen con su
+  // mensaje real y no como "Algo ha ido mal".
+  const response = await api
+    .get<Blob>(`/files/${fileId}`, { responseType: 'blob', timeout: 0 })
+    .catch(async (error: unknown) => {
+      throw toApiError(await readBlobErrorBody(error))
+    })
 
   const disposition = (response.headers['content-disposition'] as string | undefined) ?? ''
   const match = /filename\*?=(?:UTF-8''|")?([^";]+)/i.exec(disposition)

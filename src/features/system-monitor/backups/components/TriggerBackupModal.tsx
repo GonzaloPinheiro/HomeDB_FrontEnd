@@ -31,13 +31,17 @@ export function TriggerBackupModal({ open, onClose, onConfirm }: TriggerBackupMo
       }
     >
       <div className="flex flex-col gap-3 text-sm text-text-secondary">
-        <p>Se ejecutará ahora un backup diario completo de los archivos y de la base de datos.</p>
+        <p>
+          Se ejecutará ahora un backup diario completo de los archivos (de cada ubicación de almacenamiento
+          marcada para copia) y de la base de datos.
+        </p>
         <p>
           Solo se conservan las dos últimas copias: al empezar se descarta la más antigua, aunque este backup
           termine con error.
         </p>
         <p className="text-text-muted">
-          Puede tardar varios minutos. No cierres ni recargues la pestaña mientras se ejecuta.
+          Puede tardar varios minutos. No cierres ni recargues la pestaña mientras se ejecuta. Si el disco de
+          backups o uno de origen no está conectado, no se inicia.
         </p>
       </div>
     </Modal>

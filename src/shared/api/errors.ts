@@ -1,7 +1,7 @@
 // CLAUDE.md §5.1: mapa completo de ApiErrorCodes -> mensaje. Único punto de
 // verdad de toda la app — no reimplementar por feature. Verificado contra el
 // enum real del backend (HomeDB.Domain/Common/ApiErrorCodes.cs, octubre 2026):
-// coincide 1:1 con la tabla de §5.1.
+// coincide 1:1 con la tabla de §5.1 (más 1028/1029, noviembre 2026).
 export const ApiErrorCodes = {
   FileNotFound: 1001,
   FolderNotFound: 1002,
@@ -36,6 +36,14 @@ export const ApiErrorCodes = {
   // contra HomeDB.Domain/Common/ApiErrorCodes.cs y ExceptionHandlerMiddleware.
   BackupAlreadyRunning: 1025,
   BackupLevelNotSupported: 1026,
+  // CLAUDE.md §5.1/§5.4: almacenamiento multi-ubicación (StorageController,
+  // ExceptionHandlerMiddleware) — verificados contra HomeDB.Domain/Common/ApiErrorCodes.cs
+  // en la rama development del backend (noviembre 2026). NO son la cuota del
+  // usuario (StorageLimitExceeded, 1016, HTTP 413): estos hablan del DISCO.
+  /** HTTP 503: disco caído, no montado o sin escritura. No es una caída del servidor. */
+  StorageLocationUnavailable: 1028,
+  /** HTTP 507: no cabe por el espacio libre mínimo del disco o por el tope de la ubicación. */
+  StorageLocationFull: 1029,
   InternalError: 9999,
 } as const
 
@@ -68,6 +76,9 @@ const ERROR_MESSAGES: Record<number, string> = {
     'El tipo de archivo no está permitido o su contenido no coincide con su extensión',
   [ApiErrorCodes.BackupAlreadyRunning]: 'Ya hay un backup en curso — espera a que termine',
   [ApiErrorCodes.BackupLevelNotSupported]: 'Este tipo de backup todavía no está disponible',
+  [ApiErrorCodes.StorageLocationUnavailable]:
+    'Un disco de almacenamiento no está disponible — inténtalo de nuevo cuando vuelva a estar conectado',
+  [ApiErrorCodes.StorageLocationFull]: 'No hay espacio suficiente en el almacenamiento del servidor',
   [ApiErrorCodes.InternalError]: 'Error inesperado del servidor',
 }
 
