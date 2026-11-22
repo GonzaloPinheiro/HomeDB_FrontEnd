@@ -5,7 +5,6 @@ import {
   SNAPSHOT_STALE_MS,
   describeSummary,
   findCompletedRevocations,
-  formatAgo,
   formatHandshake,
   formatHandshakeAbsolute,
   formatShortKey,
@@ -58,23 +57,7 @@ describe('getDeviceStatus', () => {
   })
 })
 
-describe('formatAgo / formatHandshake', () => {
-  it('formatAgo por tramos', () => {
-    expect(formatAgo(0)).toBe('hace 0 s')
-    expect(formatAgo(8 * SECOND)).toBe('hace 8 s')
-    expect(formatAgo(59_999)).toBe('hace 59 s')
-    expect(formatAgo(60 * SECOND)).toBe('hace 1 min')
-    expect(formatAgo(3599 * SECOND)).toBe('hace 59 min')
-    expect(formatAgo(3600 * SECOND)).toBe('hace 1 h')
-    expect(formatAgo(86_399 * SECOND)).toBe('hace 23 h')
-    expect(formatAgo(86_400 * SECOND)).toBe('hace 1 día')
-    expect(formatAgo(19 * 86_400 * SECOND)).toBe('hace 19 días')
-  })
-
-  it('formatAgo nunca enseña tiempo negativo (reloj del navegador por detrás del servidor)', () => {
-    expect(formatAgo(-5000)).toBe('hace 0 s')
-  })
-
+describe('formatHandshake', () => {
   it('formatHandshake: "Nunca" sin handshake, relativo si lo hay, guion si la fecha es inválida', () => {
     expect(formatHandshake(null, NOW)).toBe('Nunca')
     expect(formatHandshake('2026-11-01T11:59:52Z', NOW)).toBe('hace 8 s')

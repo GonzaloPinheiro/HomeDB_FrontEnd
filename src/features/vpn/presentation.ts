@@ -1,4 +1,5 @@
 import { formatBytes } from '@/shared/lib/formatBytes'
+import { formatAgo } from '@/shared/lib/formatDuration'
 
 import type { VpnDevice, VpnOwner } from './types'
 
@@ -23,16 +24,6 @@ export const STATUS_LABELS: Record<DeviceStatus, string> = {
   active: 'Activo',
   inactive: 'Inactivo',
   never: 'Nunca conectado',
-}
-
-/** Milisegundos -> "hace 8 s" / "hace 5 min" / "hace 3 h" / "hace 1 día" / "hace 19 días". */
-export function formatAgo(ms: number): string {
-  const seconds = Math.max(0, Math.floor(ms / 1000))
-  if (seconds < 60) return `hace ${seconds} s`
-  if (seconds < 3600) return `hace ${Math.floor(seconds / 60)} min`
-  if (seconds < 86_400) return `hace ${Math.floor(seconds / 3600)} h`
-  const days = Math.floor(seconds / 86_400)
-  return days === 1 ? 'hace 1 día' : `hace ${days} días`
 }
 
 function toMs(iso: string): number | null {

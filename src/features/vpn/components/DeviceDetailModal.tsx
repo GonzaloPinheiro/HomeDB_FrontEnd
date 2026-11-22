@@ -12,11 +12,11 @@ import {
 } from '@/shared/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/components/ui/select'
 import { formatBytes } from '@/shared/lib/formatBytes'
+import { formatAgo } from '@/shared/lib/formatDuration'
 import { notAvailableYet } from '@/shared/lib/notAvailableYet'
 import { cn } from '@/shared/lib/utils'
 
 import {
-  formatAgo,
   formatHandshake,
   formatHandshakeAbsolute,
   formatShortKey,

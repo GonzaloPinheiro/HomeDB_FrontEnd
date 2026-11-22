@@ -1,6 +1,6 @@
 import { Activity, Cpu, HardDrive, MemoryStick, RefreshCw, Thermometer } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 
 import { toApiError } from '@/shared/api/client'
 import { EmptyState } from '@/shared/components/EmptyState'
@@ -12,6 +12,11 @@ import { cn } from '@/shared/lib/utils'
 
 import { useLastMetric, useMetricsHistory, type MetricRange } from '../api'
 import { backupKeys, useBackupUnloadGuard } from '../backups/api'
+import { storageKeys, useStorageLocations } from '../storage/api'
+import { groupByDisk, summarizeDiskProblems } from '../storage/disks'
+import { DiskDetailCard } from '../storage/components/DiskDetailCard'
+import { DiskProblemsHint } from '../storage/components/DiskProblemsHint'
+import { DiskSelector } from '../storage/components/DiskSelector'
 import { METRIC_THRESHOLDS, METRIC_UNITS, getThresholdStatus, type MetricKey } from '../thresholds'
 import type { SystemMetrics } from '../types'
 import { FanStatusInline } from './FanStatus'
@@ -61,11 +66,20 @@ function metricSubtitle(key: MetricKey, m: SystemMetrics): string | undefined {
 export function SystemMonitorDashboard() {
   const [selected, setSelected] = useState<MetricKey>('cpu')
   const [range, setRange] = useState<MetricRange>('1h')
+  // Disco elegido en la vista Disco: `null` = "Sistema" (el disco principal de la Pi, el del gráfico)
+  const [selectedDiskKey, setSelectedDiskKey] = useState<string | null>(null)
 
   const queryClient = useQueryClient()
   const last = useLastMetric()
   const history = useMetricsHistory(range)
+  const storage = useStorageLocations()
   useBackupUnloadGuard()
+
+  // CLAUDE.md §5.4/§6.13: el backend manda una fila por ubicación; la pantalla trabaja por disco
+  const disks = useMemo(() => groupByDisk(storage.data ?? []), [storage.data])
+  const diskProblems = useMemo(() => summarizeDiskProblems(disks), [disks])
+  // Si el disco elegido deja de existir (cambió la configuración del backend), se vuelve a "Sistema"
+  const activeDisk = disks.find((disk) => disk.key === selectedDiskKey) ?? null
 
   // CLAUDE.md §6.13/§7.9: refresco manual = refetch() de AMBAS queries activas,
   // más el historial de backups si el panel de Disco está montado (invalidar
@@ -74,6 +88,7 @@ export function SystemMonitorDashboard() {
     void last.refetch()
     void history.refetch()
     void queryClient.invalidateQueries({ queryKey: backupKeys.all })
+    void queryClient.invalidateQueries({ queryKey: storageKeys.all })
   }
 
   if (last.isPending) {
@@ -135,7 +150,13 @@ export function SystemMonitorDashboard() {
               selected={selected === key}
               onSelect={() => setSelected(key)}
               subtitle={metricSubtitle(key, metric)}
-              extra={key === 'temperature' ? <FanStatusInline metric={metric} /> : undefined}
+              extra={
+                key === 'temperature' ? (
+                  <FanStatusInline metric={metric} />
+                ) : key === 'disk' ? (
+                  <DiskProblemsHint problems={diskProblems} />
+                ) : undefined
+              }
             />
           )
         })}
@@ -143,28 +164,44 @@ export function SystemMonitorDashboard() {
 
       {/* CLAUDE.md §10: flex-wrap por consistencia con el resto de cabeceras de pantalla — margen de seguridad a ~375px/zoom grande */}
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-[15px] font-semibold text-text-primary">{METRIC_LABEL[selected]}</h2>
-        <RangeChips value={range} onChange={setRange} />
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+          <h2 className="text-[15px] font-semibold text-text-primary">{METRIC_LABEL[selected]}</h2>
+          {/* §6.13: solo en la vista Disco. Sin datos de almacenamiento (403, red) queda solo el
+              gráfico del disco del sistema y se avisa en pequeño; `data === undefined` y no
+              `isError`, para que un fallo puntual del sondeo no haga desaparecer los botones (§7.1). */}
+          {selected === 'disk' &&
+            (disks.length > 0 ? (
+              <DiskSelector disks={disks} value={activeDisk?.key ?? null} onChange={setSelectedDiskKey} />
+            ) : storage.data === undefined && storage.isError ? (
+              <span className="text-xs text-text-muted">Estado de los discos no disponible</span>
+            ) : null)}
+        </div>
+        {/* El rango solo vale para el histórico del disco del sistema: una ficha no tiene gráfico */}
+        {!(selected === 'disk' && activeDisk) && <RangeChips value={range} onChange={setRange} />}
       </div>
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_260px]">
-        <FloatCard className="p-4">
-          {history.isPending ? (
-            <Skeleton className="h-[260px] w-full" />
-          ) : history.isError ? (
-            <div className="flex h-[260px] items-center justify-center text-sm text-text-muted">
-              {toApiError(history.error).message}
-            </div>
-          ) : (
-            <MetricChart
-              data={history.data}
-              dataKey={METRIC_DATA_KEY[selected]}
-              unit={METRIC_UNITS[selected]}
-              threshold={METRIC_THRESHOLDS[selected]}
-              fixedDomain={selected !== 'temperature'}
-            />
-          )}
-        </FloatCard>
+        {selected === 'disk' && activeDisk ? (
+          <DiskDetailCard disk={activeDisk} />
+        ) : (
+          <FloatCard className="p-4">
+            {history.isPending ? (
+              <Skeleton className="h-[260px] w-full" />
+            ) : history.isError ? (
+              <div className="flex h-[260px] items-center justify-center text-sm text-text-muted">
+                {toApiError(history.error).message}
+              </div>
+            ) : (
+              <MetricChart
+                data={history.data}
+                dataKey={METRIC_DATA_KEY[selected]}
+                unit={METRIC_UNITS[selected]}
+                threshold={METRIC_THRESHOLDS[selected]}
+                fixedDomain={selected !== 'temperature'}
+              />
+            )}
+          </FloatCard>
+        )}
         <MetricSidePanel selected={selected} metric={metric} />
       </div>
     </div>

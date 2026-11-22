@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { formatDuration, formatMillis } from './formatDuration'
+import { formatAgo, formatDuration, formatMillis } from './formatDuration'
 
 describe('formatMillis', () => {
   it('por debajo del segundo -> milisegundos', () => {
@@ -55,5 +55,23 @@ describe('formatDuration', () => {
   it('valores inválidos -> guion', () => {
     expect(formatDuration(-1)).toBe('—')
     expect(formatDuration(Number.NaN)).toBe('—')
+  })
+})
+
+describe('formatAgo', () => {
+  it('formatAgo por tramos', () => {
+    expect(formatAgo(0)).toBe('hace 0 s')
+    expect(formatAgo(8 * 1000)).toBe('hace 8 s')
+    expect(formatAgo(59_999)).toBe('hace 59 s')
+    expect(formatAgo(60 * 1000)).toBe('hace 1 min')
+    expect(formatAgo(3599 * 1000)).toBe('hace 59 min')
+    expect(formatAgo(3600 * 1000)).toBe('hace 1 h')
+    expect(formatAgo(86_399 * 1000)).toBe('hace 23 h')
+    expect(formatAgo(86_400 * 1000)).toBe('hace 1 día')
+    expect(formatAgo(19 * 86_400 * 1000)).toBe('hace 19 días')
+  })
+
+  it('formatAgo nunca enseña tiempo negativo (reloj del navegador por detrás del servidor)', () => {
+    expect(formatAgo(-5000)).toBe('hace 0 s')
   })
 })
