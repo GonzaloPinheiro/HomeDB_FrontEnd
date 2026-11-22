@@ -65,14 +65,17 @@ const STALL_TIMEOUT_MS = 20_000
 const DIRECT_RESPONSE_TIMEOUT_MS = 60_000
 
 // CLAUDE.md §5.4/§7.4: subida directa (un archivo en UNA petición, `POST
-// /files/upload/single`). Techo duro del backend: `UploadLimits.SingleUploadMaxFileBytes`
-// (20 MiB, constante de compilación; el servidor rechaza con 413 lo que lo supere y
-// además limita la petición entera a ese tamaño + 1 MiB de margen multipart).
+// /files/upload/single`). Tope ABSOLUTO del backend: `StorageOptions.SingleUploadHardMaxBytes`
+// (20 MiB; la API no arranca si el appsettings lo supera). El valor efectivo es
+// `Storage:SingleUploadMaxFileBytes`, que el operador puede BAJAR (de 1 byte a 20 MiB)
+// y que ningún endpoint expone: el front no puede leerlo, por eso el techo real se
+// aprende en ejecución (ver `directCeilingBytes` en UploadQueueContext.tsx). Lo que lo
+// supere recibe 413/`FileTooLarge`.
 export const BACKEND_SINGLE_UPLOAD_MAX_FILE_BYTES = 20 * 1024 * 1024
 
 // Umbral del front: hasta aquí (inclusive) un archivo va directo; por encima, por
 // chunks. Decisión de este front, NO del backend, y deliberadamente por debajo de su
-// techo: lo que se gana es sobre todo en archivos pequeños (se ahorran 3 de cada 4
+// tope absoluto: lo que se gana es sobre todo en archivos pequeños (se ahorran 3 de cada 4
 // peticiones y el sondeo, un coste fijo por archivo), mientras que el riesgo de la
 // subida directa crece con el tamaño — un fallo repite el archivo ENTERO (el chunk
 // solo repite 32 MiB, y la sesión reanuda) y no es idempotente (ver

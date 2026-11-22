@@ -441,6 +441,84 @@ describe('UploadQueueProvider — subida directa de archivos pequeños (CLAUDE.m
     expect(mocked.getUploadStatus).not.toHaveBeenCalled()
   })
 
+  describe('límite del servidor menor que el umbral del front (Storage:SingleUploadMaxFileBytes)', () => {
+    const TOO_LARGE = new ApiError(ApiErrorCodes.FileTooLarge, getErrorMessage(ApiErrorCodes.FileTooLarge), {
+      httpStatus: 413,
+    })
+
+    beforeEach(() => {
+      mocked.initUploadSession.mockResolvedValue('sesion')
+      mocked.uploadChunkWithRetry.mockResolvedValue(undefined)
+      mocked.completeUploadSession.mockResolvedValue(undefined)
+      mocked.getUploadStatus.mockResolvedValue(COMPLETED)
+    })
+
+    it('un 413 de la vía directa cae al camino por chunks en vez de fallar', async () => {
+      mocked.uploadSingleFile.mockRejectedValue(TOO_LARGE)
+      const { result } = renderQueue()
+
+      act(() => result.current.actions.openPanel(TARGET))
+      act(() => {
+        result.current.actions.addFiles(createFiles(1))
+      })
+      await waitFor(() => expect(result.current.state.entries[0]?.status).toBe('done'), { timeout: 5_000 })
+
+      expect(mocked.uploadSingleFile).toHaveBeenCalledTimes(1)
+      expect(mocked.initUploadSession).toHaveBeenCalledTimes(1)
+      expect(mocked.completeUploadSession).toHaveBeenCalledTimes(1)
+    })
+
+    it('aprende el techo: los siguientes archivos de ese tamaño o más van ya por chunks, sin probar la vía directa', async () => {
+      mocked.uploadSingleFile.mockRejectedValue(TOO_LARGE)
+      const { result } = renderQueue()
+
+      act(() => result.current.actions.openPanel(TARGET))
+      act(() => {
+        result.current.actions.addFiles(createFiles(1))
+      })
+      await waitFor(() => expect(result.current.state.entries[0]?.status).toBe('done'), { timeout: 5_000 })
+
+      act(() => {
+        result.current.actions.addFiles(createFiles(2)) // mismo tamaño que el rechazado
+      })
+      await waitFor(() => expect(result.current.state.entries.every((e) => e.status === 'done')).toBe(true), {
+        timeout: 5_000,
+      })
+
+      expect(mocked.uploadSingleFile).toHaveBeenCalledTimes(1) // solo la primera prueba
+      expect(mocked.initUploadSession).toHaveBeenCalledTimes(3)
+    })
+
+    it('si era el máximo del usuario, el camino por chunks lo rechaza con el mismo código y la fila queda en error', async () => {
+      mocked.uploadSingleFile.mockRejectedValue(TOO_LARGE)
+      mocked.initUploadSession.mockRejectedValue(TOO_LARGE)
+      const { result } = renderQueue()
+
+      act(() => result.current.actions.openPanel(TARGET))
+      act(() => {
+        result.current.actions.addFiles(createFiles(1))
+      })
+      await waitFor(() => expect(result.current.state.entries[0]?.status).toBe('error'), { timeout: 5_000 })
+
+      expect(result.current.state.entries[0].errorCode).toBe(ApiErrorCodes.FileTooLarge)
+    })
+
+    it('cualquier otro rechazo de la vía directa NO cae a chunks', async () => {
+      mocked.uploadSingleFile.mockRejectedValue(
+        new ApiError(ApiErrorCodes.StorageLimitExceeded, 'cuota', { httpStatus: 413 }),
+      )
+      const { result } = renderQueue()
+
+      act(() => result.current.actions.openPanel(TARGET))
+      act(() => {
+        result.current.actions.addFiles(createFiles(1))
+      })
+      await waitFor(() => expect(result.current.state.entries[0]?.status).toBe('error'))
+
+      expect(mocked.initUploadSession).not.toHaveBeenCalled()
+    })
+  })
+
   it('una subida directa cancelada libera su sitio y deja pasar a la siguiente', async () => {
     // MAX_CONCURRENT_UPLOADS = 2: dos peticiones abiertas a la vez y la tercera espera en cola.
     mocked.uploadSingleFile.mockImplementation((_file, _folder, signal) => pendingUntilAborted(signal))

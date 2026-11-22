@@ -26,6 +26,7 @@ import { FolderResolver } from './folderResolver'
 import { InvalidationBatcher } from './invalidationBatcher'
 import {
   CHUNK_SIZE_BYTES,
+  DIRECT_UPLOAD_MAX_BYTES,
   MAX_CONCURRENT_UPLOADS,
   MAX_PARALLEL_CHUNK_UPLOADS,
   UploadOutcomeUnknownError,
@@ -189,6 +190,12 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
   // Espejos de lo que las acciones necesitan LEER sin depender de ello: si leyeran el
   // estado, dejarían de ser estables y el Context de acciones no serviría de nada.
   const entriesRef = useRef<UploadQueueEntry[]>([])
+  // Techo de la subida directa que el servidor ha demostrado aceptar (CLAUDE.md §7.4). Empieza
+  // en el umbral del front, pero el backend puede tener un límite menor (Storage:
+  // SingleUploadMaxFileBytes, que ningún endpoint expone): al recibir un 413/FileTooLarge de
+  // un archivo directo se baja a justo por debajo de su tamaño, y los siguientes de ese
+  // tamaño o más van ya por chunks sin gastar una petición en volver a probarlo.
+  const directCeilingBytesRef = useRef(DIRECT_UPLOAD_MAX_BYTES)
   const activeTargetRef = useRef<UploadTarget | null>(null)
 
   const patchEntry = useCallback((id: string, patch: Partial<UploadQueueEntry>) => {
@@ -354,16 +361,31 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
 
         // Archivo pequeño sin sesión previa: subida directa. Con sesión (reintento de uno
         // que ya empezó por chunks) se conserva el camino de abajo, que sabe reanudarla.
-        if (entry.sessionId === undefined && shouldUploadDirect(entry.file.size)) {
-          await uploadDirect(destinationFolderId)
-          patchEntry(entry.id, {
-            status: 'done',
-            progress: 100,
-            uploadedBytes: entry.file.size,
-            speedBytesPerSec: null,
-          })
-          invalidationBatcher.markChanged(destinationFolderId, { storageUsage: true })
-          return
+        if (
+          entry.sessionId === undefined &&
+          entry.file.size <= directCeilingBytesRef.current &&
+          shouldUploadDirect(entry.file.size)
+        ) {
+          try {
+            await uploadDirect(destinationFolderId)
+            patchEntry(entry.id, {
+              status: 'done',
+              progress: 100,
+              uploadedBytes: entry.file.size,
+              speedBytesPerSec: null,
+            })
+            invalidationBatcher.markChanged(destinationFolderId, { storageUsage: true })
+            return
+          } catch (error) {
+            // 413/FileTooLarge: o el límite de la subida directa del servidor es menor que
+            // nuestro umbral, o el archivo supera el máximo del usuario. El servidor rechaza
+            // ANTES de guardar nada, así que es seguro probar con el camino por chunks: si era
+            // el máximo del usuario, `init` lo rechaza con el mismo código y la fila queda en
+            // error como siempre. Cualquier otro fallo (o una cancelación) sigue su curso.
+            if (controller.signal.aborted || toApiError(error).errorCode !== ApiErrorCodes.FileTooLarge) throw error
+            directCeilingBytesRef.current = Math.min(directCeilingBytesRef.current, entry.file.size - 1)
+            patchEntry(entry.id, { progress: 0, uploadedBytes: 0, speedBytesPerSec: null })
+          }
         }
 
         // Reintento (§7.4): si la entrada ya tenía sesión, el servidor dice en qué
