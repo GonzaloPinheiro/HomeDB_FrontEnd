@@ -26,15 +26,19 @@ import { FolderResolver } from './folderResolver'
 import { InvalidationBatcher } from './invalidationBatcher'
 import {
   CHUNK_SIZE_BYTES,
+  DIRECT_UPLOAD_MAX_BYTES,
   MAX_CONCURRENT_UPLOADS,
   MAX_PARALLEL_CHUNK_UPLOADS,
+  UploadOutcomeUnknownError,
   aggregateProgress,
   completeUploadSession,
   computeChunkPlan,
   getUploadStatus,
   initUploadSession,
   loadedBytesTotal,
+  shouldUploadDirect,
   uploadChunkWithRetry,
+  uploadSingleFile,
 } from './pipeline'
 import { RateLimitGate, withRateLimitRetry } from './rateLimit'
 import { SpeedTracker } from './speed'
@@ -186,6 +190,12 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
   // Espejos de lo que las acciones necesitan LEER sin depender de ello: si leyeran el
   // estado, dejarían de ser estables y el Context de acciones no serviría de nada.
   const entriesRef = useRef<UploadQueueEntry[]>([])
+  // Techo de la subida directa que el servidor ha demostrado aceptar (CLAUDE.md §7.4). Empieza
+  // en el umbral del front, pero el backend puede tener un límite menor (Storage:
+  // SingleUploadMaxFileBytes, que ningún endpoint expone): al recibir un 413/FileTooLarge de
+  // un archivo directo se baja a justo por debajo de su tamaño, y los siguientes de ese
+  // tamaño o más van ya por chunks sin gastar una petición en volver a probarlo.
+  const directCeilingBytesRef = useRef(DIRECT_UPLOAD_MAX_BYTES)
   const activeTargetRef = useRef<UploadTarget | null>(null)
 
   const patchEntry = useCallback((id: string, patch: Partial<UploadQueueEntry>) => {
@@ -295,6 +305,44 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
         }
       }
 
+      // CLAUDE.md §7.4: subida directa — el archivo entero en UNA petición (sin sesión,
+      // sin chunks, sin `complete` ni sondeo de `status`). Cuenta como una petición en
+      // vuelo del tope global (`chunkSlots`), igual que un chunk, para que el total de
+      // peticiones simultáneas siga siendo MAX_PARALLEL_CHUNK_UPLOADS, sean directas o no.
+      const uploadDirect = async (destinationFolderId: number | null) => {
+        const totalBytes = entry.file.size
+        const releaseSlot = await chunkSlots.acquire(controller.signal)
+
+        let loadedBytes = 0
+        let lastProgress = -1
+        const speedTracker = new SpeedTracker()
+        const reportProgress = () => {
+          speedTracker.record(Date.now(), loadedBytes)
+          const progress = aggregateProgress([totalBytes], [loadedBytes], totalBytes)
+          if (progress === lastProgress) return
+          lastProgress = progress
+          patchEntry(entry.id, { progress })
+        }
+        const speedTimer = setInterval(() => {
+          patchEntry(entry.id, { uploadedBytes: loadedBytes, speedBytesPerSec: speedTracker.bytesPerSecond(Date.now()) })
+        }, 1000)
+
+        try {
+          await limited(() => {
+            // Si la petición se repite (tras una pausa por 429) arranca de cero.
+            loadedBytes = 0
+            return uploadSingleFile(entry.file, destinationFolderId, controller.signal, (sentBytes) => {
+              // `sentBytes` incluye el sobre multipart: se acota al tamaño del archivo.
+              loadedBytes = Math.min(sentBytes, totalBytes)
+              reportProgress()
+            })
+          })
+        } finally {
+          clearInterval(speedTimer)
+          releaseSlot()
+        }
+      }
+
       // Carpeta en la que va el archivo. Es `entry.folderId` salvo en la subida de una
       // carpeta (§7.4): ahí hay que crear (o reutilizar) las carpetas de `subPath` y
       // se hace aquí, dentro del hueco de subida del propio archivo, para que un
@@ -310,6 +358,35 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
 
       try {
         const destinationFolderId = await resolveDestination()
+
+        // Archivo pequeño sin sesión previa: subida directa. Con sesión (reintento de uno
+        // que ya empezó por chunks) se conserva el camino de abajo, que sabe reanudarla.
+        if (
+          entry.sessionId === undefined &&
+          entry.file.size <= directCeilingBytesRef.current &&
+          shouldUploadDirect(entry.file.size)
+        ) {
+          try {
+            await uploadDirect(destinationFolderId)
+            patchEntry(entry.id, {
+              status: 'done',
+              progress: 100,
+              uploadedBytes: entry.file.size,
+              speedBytesPerSec: null,
+            })
+            invalidationBatcher.markChanged(destinationFolderId, { storageUsage: true })
+            return
+          } catch (error) {
+            // 413/FileTooLarge: o el límite de la subida directa del servidor es menor que
+            // nuestro umbral, o el archivo supera el máximo del usuario. El servidor rechaza
+            // ANTES de guardar nada, así que es seguro probar con el camino por chunks: si era
+            // el máximo del usuario, `init` lo rechaza con el mismo código y la fila queda en
+            // error como siempre. Cualquier otro fallo (o una cancelación) sigue su curso.
+            if (controller.signal.aborted || toApiError(error).errorCode !== ApiErrorCodes.FileTooLarge) throw error
+            directCeilingBytesRef.current = Math.min(directCeilingBytesRef.current, entry.file.size - 1)
+            patchEntry(entry.id, { progress: 0, uploadedBytes: 0, speedBytesPerSec: null })
+          }
+        }
 
         // Reintento (§7.4): si la entrada ya tenía sesión, el servidor dice en qué
         // punto quedó (faltan chunks / ya ensamblando / ya terminada) en vez de
@@ -373,9 +450,11 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
       } catch (error) {
         if (controller.signal.aborted) {
           patchEntry(entry.id, { status: 'cancelled', speedBytesPerSec: null })
-        } else if (error instanceof ProcessingTimeoutError) {
+        } else if (error instanceof ProcessingTimeoutError || error instanceof UploadOutcomeUnknownError) {
           // Sin código de la API y sin ser un fallo de red: no se reintenta solo
-          // (types.ts). La sesión se conserva: "Reintentar" vuelve a mirar su estado.
+          // (types.ts). Con un ProcessingTimeoutError la sesión se conserva y "Reintentar"
+          // vuelve a mirar su estado; con un UploadOutcomeUnknownError (subida directa cuyo
+          // cuerpo llegó entero pero sin respuesta) reintentar a ciegas duplicaría el archivo.
           patchEntry(entry.id, {
             status: 'error',
             speedBytesPerSec: null,

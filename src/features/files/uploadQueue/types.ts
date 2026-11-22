@@ -34,7 +34,7 @@ export type UploadQueueEntry = {
   uploadedBytes: number
   /** Velocidad media reciente en bytes/s, o `null` si aún no se puede medir (speed.ts). */
   speedBytesPerSec: number | null
-  /** 0 hasta que se conoce (tras responder POST /init). */
+  /** 0 hasta que se conoce (tras responder POST /init); se queda en 0 en una subida directa, que no tiene chunks (§7.4). */
   totalChunks: number
   /** Vacío hasta que se conoce totalChunks; un valor por chunk, en orden. */
   chunks: ChunkStatus[]
@@ -48,7 +48,9 @@ export type UploadQueueEntry = {
    * conexión) de un rechazo real del servidor (FileTooLarge, etc. — reintentar
    * solo no lo arregla, hace falta acción del usuario). `undefined` = tampoco hay
    * código de la API, pero el fallo no es de red (se agotó el plazo de espera del
-   * procesado, ProcessingTimeoutError): tampoco se reintenta solo.
+   * procesado, ProcessingTimeoutError; o una subida directa cuyo cuerpo llegó entero
+   * pero sin respuesta, UploadOutcomeUnknownError, que duplicaría el archivo): tampoco
+   * se reintenta solo.
    */
   errorCode?: number | null
 }
