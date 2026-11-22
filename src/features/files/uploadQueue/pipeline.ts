@@ -3,8 +3,10 @@ import type { ApiObjResponse } from '@/shared/types/api'
 
 import {
   uploadCompleteResponseSchema,
+  uploadFileResponseSchema,
   uploadInitResponseSchema,
   uploadStatusResponseSchema,
+  type UploadFileResponse,
   type UploadStatusResponse,
 } from '../types'
 
@@ -54,6 +56,34 @@ const BASE_RETRY_DELAY_MS = 500
 // por eso este chunk desactiva ese timeout (`timeout: 0`) y usa en su lugar
 // este temporizador que se reinicia en cada evento de progreso real.
 const STALL_TIMEOUT_MS = 20_000
+
+// CLAUDE.md §7.4: una vez enviado el cuerpo entero de una subida directa ya no llegan
+// eventos de progreso, así que el temporizador de stall de arriba (20 s) mediría lo
+// que tarda el SERVIDOR en validar, escribir y responder, no la conexión. Se amplía
+// para ese tramo: el servidor tiene que comprobar la cabecera, escribir hasta 10 MiB y
+// guardar el registro. Al agotarse el resultado es DESCONOCIDO (UploadOutcomeUnknownError).
+const DIRECT_RESPONSE_TIMEOUT_MS = 60_000
+
+// CLAUDE.md §5.4/§7.4: subida directa (un archivo en UNA petición, `POST
+// /files/upload/single`). Techo duro del backend: `UploadLimits.SingleUploadMaxFileBytes`
+// (20 MiB, constante de compilación; el servidor rechaza con 413 lo que lo supere y
+// además limita la petición entera a ese tamaño + 1 MiB de margen multipart).
+export const BACKEND_SINGLE_UPLOAD_MAX_FILE_BYTES = 20 * 1024 * 1024
+
+// Umbral del front: hasta aquí (inclusive) un archivo va directo; por encima, por
+// chunks. Decisión de este front, NO del backend, y deliberadamente por debajo de su
+// techo: lo que se gana es sobre todo en archivos pequeños (se ahorran 3 de cada 4
+// peticiones y el sondeo, un coste fijo por archivo), mientras que el riesgo de la
+// subida directa crece con el tamaño — un fallo repite el archivo ENTERO (el chunk
+// solo repite 32 MiB, y la sesión reanuda) y no es idempotente (ver
+// `uploadSingleFile`). Es el único mando: subirlo o bajarlo es tocar solo este número
+// (pipeline.test.ts comprueba que cabe en el límite del backend).
+export const DIRECT_UPLOAD_MAX_BYTES = 10 * 1024 * 1024
+
+/** ¿Va este archivo por la subida directa? Un archivo vacío no (el backend lo rechaza en las dos vías y ya se descarta al encolar, §7.4). */
+export function shouldUploadDirect(sizeBytes: number): boolean {
+  return sizeBytes > 0 && sizeBytes <= DIRECT_UPLOAD_MAX_BYTES
+}
 
 export type ChunkPlan = {
   totalChunks: number
@@ -239,4 +269,113 @@ export async function getUploadStatus(sessionId: string, signal: AbortSignal): P
 export async function completeUploadSession(sessionId: string, signal: AbortSignal): Promise<void> {
   const response = await api.post<ApiObjResponse<unknown>>(`/files/upload/${sessionId}/complete`, undefined, { signal })
   uploadCompleteResponseSchema.parse(unwrap(response.data))
+}
+
+/**
+ * El cuerpo de una subida directa llegó entero al servidor pero no se recibió la
+ * respuesta (corte de red o plazo agotado): el archivo PUEDE haberse guardado ya.
+ * Reintentar a ciegas crearía un duplicado (el backend admite nombres repetidos), así
+ * que el llamante NO debe reintentarlo solo — ni al volver la conexión — y el mensaje
+ * pide al usuario mirar la carpeta antes. Es la diferencia clave con la subida por
+ * chunks, donde repetir es idempotente. No extiende `ApiError`: no es un fallo de red
+ * (que sí se reintenta solo, §7.4) ni una respuesta del backend.
+ */
+export class UploadOutcomeUnknownError extends Error {
+  constructor() {
+    super(
+      'No se pudo confirmar si el archivo se subió: la conexión se perdió al terminar. Revisa la carpeta antes de reintentar para no duplicarlo',
+    )
+    this.name = 'UploadOutcomeUnknownError'
+  }
+}
+
+type SingleAttemptOutcome = { kind: 'ok'; file: UploadFileResponse } | { kind: 'unsent'; error: unknown }
+
+async function attemptSingleUpload(
+  file: File,
+  folderId: number | null,
+  signal: AbortSignal,
+  onProgress: (loadedBytes: number) => void,
+): Promise<SingleAttemptOutcome> {
+  // El campo se llama `file` y `folderId` solo se envía si hay carpeta (UploadController.
+  // UploadSingleAsync: `int? folderId`; ausente = raíz). El nombre lo sanea el servidor.
+  const formData = new FormData()
+  formData.append('file', file)
+  if (folderId !== null) formData.append('folderId', String(folderId))
+
+  // Mismo puente cancelación/stall que `sendChunk`.
+  const requestController = new AbortController()
+  const onOuterAbort = () => requestController.abort()
+  signal.addEventListener('abort', onOuterAbort)
+
+  let bodyFullySent = false
+  let stallTimer: ReturnType<typeof setTimeout> | undefined
+  const armTimer = (ms: number) => {
+    clearTimeout(stallTimer)
+    stallTimer = setTimeout(() => requestController.abort(), ms)
+  }
+  armTimer(STALL_TIMEOUT_MS)
+
+  try {
+    const response = await api.post<ApiObjResponse<unknown>>('/files/upload/single', formData, {
+      signal: requestController.signal,
+      timeout: 0, // sin techo de duración total — lo controlan los temporizadores de arriba
+      onUploadProgress: (event) => {
+        onProgress(event.loaded)
+        // axios emite un último evento al terminar de enviar (`loadend`) con loaded === total.
+        if (event.total !== undefined && event.loaded >= event.total) {
+          bodyFullySent = true
+          armTimer(DIRECT_RESPONSE_TIMEOUT_MS)
+        } else {
+          armTimer(STALL_TIMEOUT_MS)
+        }
+      },
+    })
+    return { kind: 'ok', file: uploadFileResponseSchema.parse(unwrap(response.data)) }
+  } catch (error) {
+    if (signal.aborted) throw toApiError(error)
+    const apiError = toApiError(error)
+    // Hubo respuesta del backend (cualquier código HTTP): es un resultado, no una duda.
+    if (apiError.httpStatus !== null) throw apiError
+    // Sin respuesta y con el cuerpo ya entregado: el servidor pudo guardarlo.
+    if (bodyFullySent) throw new UploadOutcomeUnknownError()
+    // Sin respuesta y sin haber terminado de enviar: el servidor no recibió el archivo
+    // entero (un multipart truncado no se procesa), así que repetirlo es seguro.
+    return { kind: 'unsent', error: apiError }
+  } finally {
+    clearTimeout(stallTimer)
+    signal.removeEventListener('abort', onOuterAbort)
+  }
+}
+
+/**
+ * POST /files/upload/single — sube un archivo (≤ `DIRECT_UPLOAD_MAX_BYTES`) en una sola
+ * petición y devuelve el archivo creado. El servidor aplica las mismas validaciones que
+ * la subida por chunks (extensión, magic numbers, tamaño, cuota, disco, §5.4) pero TODAS
+ * de forma síncrona: un archivo con contenido que no coincide con su extensión llega
+ * aquí como error 400/1027, no por `GET /status`.
+ *
+ * Reintentos (CLAUDE.md §7.4), más estrictos que los de un chunk porque repetir NO es
+ * idempotente: solo se repite, hasta `MAX_CHUNK_ATTEMPTS` veces con backoff, si la
+ * conexión cayó ANTES de terminar de enviar el cuerpo. Cualquier respuesta del backend
+ * (400, 413, 503, 507, 5xx…) se propaga tal cual, y un corte DESPUÉS de enviarlo todo lanza
+ * `UploadOutcomeUnknownError`. Un 429 se propaga también: lo repite `withRateLimitRetry`
+ * (rateLimit.ts) tras pausar toda la cola, y es seguro — el limitador rechaza antes de
+ * ejecutar el endpoint.
+ */
+export async function uploadSingleFile(
+  file: File,
+  folderId: number | null,
+  signal: AbortSignal,
+  onProgress: (loadedBytes: number) => void,
+): Promise<UploadFileResponse> {
+  let lastError: unknown
+  for (let attempt = 1; attempt <= MAX_CHUNK_ATTEMPTS; attempt++) {
+    const outcome = await attemptSingleUpload(file, folderId, signal, onProgress)
+    if (outcome.kind === 'ok') return outcome.file
+    lastError = outcome.error
+    onProgress(0) // el intento fallido no cuenta como progreso parcial
+    if (attempt < MAX_CHUNK_ATTEMPTS) await delay(backoffDelayMs(attempt))
+  }
+  throw lastError
 }

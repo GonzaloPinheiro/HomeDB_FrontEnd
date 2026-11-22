@@ -34,6 +34,7 @@ export const uploadFileResponseSchema = z.object({
   ownerId: z.number(),
   uploadedAt: z.string(),
 })
+export type UploadFileResponse = z.infer<typeof uploadFileResponseSchema>
 
 // CLAUDE.md §5.4/§7.4: subida por chunks — formas reales de UploadDTOs.cs
 // (UploadController, verificado octubre 2026, tras pasar `complete` a una cola
